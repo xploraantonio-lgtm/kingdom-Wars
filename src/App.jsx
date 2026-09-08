@@ -8,7 +8,7 @@ const GEM_SPAWN_MS = 30_000
 const MAX_ACTIVE_GEMS = 4
 const CENTER_INDEX = Math.floor(MAP_SIZE / 2)
 const CENTER_ID = `${CENTER_INDEX}-${CENTER_INDEX}`
-const CENTER_OFFSET = { x: -735, y: -660 }
+const INITIAL_SCALE = 0.68
 
 function TileImage({ def }) {
   const src = def.assets?.[0]
@@ -26,14 +26,47 @@ export default function App() {
   const initialMap = useMemo(() => generateMap(MAP_SIZE), [])
   const [tiles, setTiles] = useState(initialMap)
   const [selectedId, setSelectedId] = useState(CENTER_ID)
-  const [scale, setScale] = useState(0.68)
-  const [offset, setOffset] = useState(CENTER_OFFSET)
+  const [scale, setScale] = useState(INITIAL_SCALE)
+  const [offset, setOffset] = useState({ x: -735, y: -660 })
   const [nextGemIn, setNextGemIn] = useState(GEM_SPAWN_MS)
   const [notice, setNotice] = useState('Selecciona los escombros en 0,0 y funda la primera base.')
   const drag = useRef(null)
+  const viewportRef = useRef(null)
 
   const selected = selectedId ? tiles.find((tile) => tile.id === selectedId) : null
   const activeGemCount = tiles.filter((tile) => tile.type === 'gems').length
+
+  function clampOffset(nextOffset, atScale = scale) {
+    const viewport = viewportRef.current
+    if (!viewport) return nextOffset
+
+    const rect = viewport.getBoundingClientRect()
+    const worldWidth = MAP_SIZE * TILE_SIZE * atScale
+    const worldHeight = MAP_SIZE * TILE_SIZE * atScale
+
+    // El mapa nunca puede separarse del borde del viewport.
+    // Arriba/izquierda el límite es 0; abajo/derecha, la última fila/columna.
+    const minX = Math.min(0, rect.width - worldWidth)
+    const minY = Math.min(0, rect.height - worldHeight)
+
+    return {
+      x: Math.min(0, Math.max(minX, nextOffset.x)),
+      y: Math.min(0, Math.max(minY, nextOffset.y)),
+    }
+  }
+
+  function centeredOffset(atScale = scale) {
+    const viewport = viewportRef.current
+    if (!viewport) return offset
+
+    const rect = viewport.getBoundingClientRect()
+    const centerOfOriginTile = (CENTER_INDEX + 0.5) * TILE_SIZE * atScale
+
+    return clampOffset({
+      x: rect.width / 2 - centerOfOriginTile,
+      y: rect.height / 2 - centerOfOriginTile,
+    }, atScale)
+  }
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -53,14 +86,44 @@ export default function App() {
     return () => window.clearInterval(timer)
   }, [])
 
+  useEffect(() => {
+    // Corrige el offset inicial y cualquier cambio de tamaño/orientación.
+    const recenter = () => setOffset((current) => clampOffset(current, scale))
+    recenter()
+    window.addEventListener('resize', recenter)
+    return () => window.removeEventListener('resize', recenter)
+  }, [scale])
+
   function zoom(delta) {
-    setScale((value) => Math.min(1.3, Math.max(0.42, Number((value + delta).toFixed(2)))))
+    const nextScale = Math.min(1.3, Math.max(0.42, Number((scale + delta).toFixed(2))))
+    if (nextScale === scale) return
+
+    const viewport = viewportRef.current
+    if (!viewport) {
+      setScale(nextScale)
+      return
+    }
+
+    // Mantiene aproximadamente el mismo punto del mundo bajo el centro de pantalla.
+    const rect = viewport.getBoundingClientRect()
+    const cx = rect.width / 2
+    const cy = rect.height / 2
+    const ratio = nextScale / scale
+    const nextOffset = {
+      x: cx - (cx - offset.x) * ratio,
+      y: cy - (cy - offset.y) * ratio,
+    }
+
+    setScale(nextScale)
+    setOffset(clampOffset(nextOffset, nextScale))
   }
 
   function centerOrigin() {
-    setScale(0.68)
-    setOffset(CENTER_OFFSET)
-    setSelectedId(CENTER_ID)
+    setScale(INITIAL_SCALE)
+    requestAnimationFrame(() => {
+      setOffset(centeredOffset(INITIAL_SCALE))
+      setSelectedId(CENTER_ID)
+    })
   }
 
   function onPointerDown(event) {
@@ -79,10 +142,15 @@ export default function App() {
     const dx = event.clientX - drag.current.pointerX
     const dy = event.clientY - drag.current.pointerY
     if (Math.abs(dx) + Math.abs(dy) > 8) drag.current.moved = true
-    setOffset({ x: drag.current.offsetX + dx, y: drag.current.offsetY + dy })
+
+    setOffset(clampOffset({
+      x: drag.current.offsetX + dx,
+      y: drag.current.offsetY + dy,
+    }))
   }
 
   function onPointerUp() {
+    setOffset((current) => clampOffset(current))
     window.setTimeout(() => {
       drag.current = null
     }, 0)
@@ -148,6 +216,7 @@ export default function App() {
         </header>
 
         <div
+          ref={viewportRef}
           className="map-viewport"
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
