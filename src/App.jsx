@@ -42,7 +42,7 @@ export default function App() {
   const [scale, setScale] = useState(INITIAL_SCALE)
   const [offset, setOffset] = useState({ x: -1500, y: -1500 })
   const [nextGemIn, setNextGemIn] = useState(GEM_SPAWN_MS)
-  const [notice, setNotice] = useState('Mapa 50×50. Toca recursos, bases, enemigos, gemas, misiones o escombros para ver su ficha.')
+  const [notice, setNotice] = useState('Mapa 50×50. Toca recursos, bases, enemigos, gemas o escombros para ver su ficha.')
   const [playerNumber, setPlayerNumber] = useState(2)
   const [activeMenu, setActiveMenu] = useState('home')
   const [coordQuery, setCoordQuery] = useState('')
@@ -167,7 +167,7 @@ export default function App() {
 
   function isImportantTile(tile) {
     const def = TILE_TYPES[tile.type]
-    return Boolean(tile.isPlayerBase || def.resource || ['enemy', 'mission'].includes(def.role) || tile.type === 'decorativeA')
+    return Boolean(tile.isPlayerBase || def.resource || def.role === 'enemy' || def.role === 'rubble')
   }
 
   function selectTile(tile) {
@@ -260,19 +260,7 @@ export default function App() {
       action: 'Atacar',
     }
 
-    if (def.role === 'mission') return {
-      title: 'Punto de misión',
-      subtitle: `${tileLabel} · Misión`,
-      lines: [
-        `Posición: (${tile.worldX}, ${tile.worldY})`,
-        'Contiene un objetivo o evento del mundo.',
-        'Completa sus condiciones para reclamar recompensas.',
-      ],
-      image: def.assets?.[0],
-      action: 'Ver misión',
-    }
-
-    if (tile.type === 'decorativeA') return {
+    if (def.role === 'rubble') return {
       title: 'Escombros',
       subtitle: `${tileLabel} · Punto de interés`,
       lines: [
