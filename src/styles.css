@@ -23,28 +23,46 @@ h1 { margin: 0; font-size: 20px; line-height: 1; letter-spacing: .05em; }
 .resource-row span { grid-row: 1 / span 2; align-self: center; font-size: 20px; }
 .resource-row strong { font-size: 13px; line-height: 1.1; }
 .resource-row small { color: #8fa4b8; font-size: 9px; }
+
 .map-viewport { position: relative; height: 590px; overflow: hidden; touch-action: none; background: #ddecf8; cursor: grab; user-select: none; }
 .map-viewport:active { cursor: grabbing; }
 .map-grid { position: absolute; left: 0; top: 0; display: grid; gap: 0; transform-origin: 0 0; will-change: transform; background: #ddecf8; }
 .tile { position: relative; width: 112px; height: 112px; padding: 0; margin: 0; border: 0; outline: 0; background: #deeffb; overflow: hidden; isolation: isolate; }
-.tile img { position: absolute; inset: -1px; width: calc(100% + 2px); height: calc(100% + 2px); object-fit: cover; display: block; pointer-events: none; user-select: none; image-rendering: auto; transform: scale(1.012); transform-origin: center; }
-.tile::after { content: ''; position: absolute; inset: 0; z-index: 1; pointer-events: none; box-shadow: inset 0 0 18px rgba(190, 222, 241, .08); }
+.tile .terrain-image { position: absolute; inset: -1px; width: calc(100% + 2px); height: calc(100% + 2px); object-fit: cover; display: block; pointer-events: none; user-select: none; image-rendering: auto; transform: scale(1.012); transform-origin: center; z-index: 0; }
+.tile::after { content: ''; position: absolute; inset: 0; z-index: 7; pointer-events: none; box-shadow: inset 0 0 18px rgba(190, 222, 241, .08); }
 .tile-fallback { display: none; position: absolute; inset: 0; width: 100%; height: 100%; place-items: center; font-size: 38px; background: linear-gradient(145deg, #eaf7ff, #cfe6f6); }
 .tile-fallback.visible { display: grid; }
+
 .tile.axis-x::after { box-shadow: inset 0 -2px 0 rgba(30,102,156,.42), inset 0 2px 0 rgba(30,102,156,.42); }
 .tile.axis-y::after { box-shadow: inset -2px 0 0 rgba(30,102,156,.42), inset 2px 0 0 rgba(30,102,156,.42); }
 .tile.axis-x.axis-y::after { box-shadow: inset 0 -2px 0 rgba(30,102,156,.55), inset 0 2px 0 rgba(30,102,156,.55), inset -2px 0 0 rgba(30,102,156,.55), inset 2px 0 0 rgba(30,102,156,.55); }
-.axis-coordinate { position: absolute; z-index: 5; left: 5px; bottom: 5px; padding: 2px 4px; border-radius: 5px; color: #123957; background: rgba(240,249,255,.78); font-size: 8px; font-weight: 900; line-height: 1; pointer-events: none; }
+.axis-coordinate { position: absolute; z-index: 9; left: 5px; bottom: 5px; padding: 2px 4px; border-radius: 5px; color: #123957; background: rgba(240,249,255,.82); font-size: 8px; font-weight: 900; line-height: 1; pointer-events: none; }
 .origin .axis-coordinate { color: #171006; background: rgba(255,209,73,.9); }
 .tile.selected { z-index: 8; box-shadow: inset 0 0 0 5px #39adff, inset 0 0 0 7px rgba(255,255,255,.7); }
 .tile.selected::after { box-shadow: inset 0 0 24px rgba(54,169,255,.35); }
-.tile-resource::before, .tile-enemy::before, .tile-mission::before, .tile-event::before { content: ''; position: absolute; z-index: 4; left: 7px; top: 7px; width: 8px; height: 8px; border-radius: 999px; background: rgba(255,255,255,.92); box-shadow: 0 1px 5px rgba(0,0,0,.35); pointer-events: none; }
+.tile-resource::before, .tile-enemy::before, .tile-mission::before, .tile-event::before { content: ''; position: absolute; z-index: 8; left: 7px; top: 7px; width: 8px; height: 8px; border-radius: 999px; background: rgba(255,255,255,.92); box-shadow: 0 1px 5px rgba(0,0,0,.35); pointer-events: none; }
 .tile-enemy::before { background: #e74b4b; }
 .tile-mission::before { background: #61b7ff; }
 .tile-event::before { width: 11px; height: 11px; background: #ffd65a; box-shadow: 0 0 0 3px rgba(255,214,90,.25), 0 0 14px rgba(255,214,90,.9); }
+
 .player-base { z-index: 6; }
-.player-base::after { box-shadow: inset 0 0 0 4px rgba(49,150,255,.74), inset 0 0 26px rgba(49,150,255,.25); }
-.base-marker { position: absolute; z-index: 6; left: 50%; top: 50%; transform: translate(-50%,-53%); display: grid; place-items: center; width: 58px; height: 58px; border-radius: 50%; background: rgba(10,55,94,.84); border: 3px solid rgba(255,255,255,.92); box-shadow: 0 5px 16px rgba(0,0,0,.3), 0 0 0 5px rgba(52,157,255,.26); font-size: 32px; pointer-events: none; }
+.player-base::after { box-shadow: inset 0 0 0 3px rgba(49,150,255,.64), inset 0 0 24px rgba(49,150,255,.18); }
+.tile .base-layer {
+  position: absolute;
+  z-index: 5;
+  left: 50%;
+  top: 50%;
+  width: 106%;
+  height: 106%;
+  object-fit: contain;
+  transform: translate(-50%, -50%);
+  transform-origin: center;
+  display: block;
+  pointer-events: none;
+  user-select: none;
+  filter: drop-shadow(0 7px 5px rgba(23, 45, 61, .32));
+}
+
 .gem-spawn { animation: gemArrival .9s ease-out; }
 @keyframes gemArrival { 0% { filter: brightness(1.65); transform: scale(.94); } 55% { filter: brightness(1.22); } 100% { filter: brightness(1); transform: scale(1); } }
 .zoom-controls { position: absolute; right: 12px; top: 12px; z-index: 20; display: grid; gap: 8px; }
@@ -56,11 +74,14 @@ h1 { margin: 0; font-size: 20px; line-height: 1; letter-spacing: .05em; }
 .gem-status strong { font-size: 10px; }
 .gem-status small { margin-top: 2px; color: #a9bed0; font-size: 8px; }
 .gem-dot { color: #ffd45a; font-size: 15px; text-shadow: 0 0 8px rgba(255,212,90,.75); }
+
 .notice-bar { min-height: 42px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 10px 7px 14px; color: #c9d9e7; background: #0a1826; border-top: 1px solid rgba(255,255,255,.06); border-bottom: 1px solid rgba(255,255,255,.06); font-size: 9px; font-weight: 700; }
 .notice-bar span { min-width: 0; flex: 1; }
 .spawn-player-button { flex: 0 0 auto; border: 1px solid rgba(255,255,255,.12); border-radius: 9px; padding: 7px 9px; color: #16200d; background: linear-gradient(180deg,#d9ef7a,#9fc444); font-size: 9px; font-weight: 900; cursor: pointer; }
+
 .selection-panel { min-height: 82px; display: flex; align-items: center; gap: 10px; padding: 12px 14px; background: #0f2236; }
-.selection-icon { width: 48px; height: 48px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 12px; background: rgba(255,255,255,.08); font-size: 26px; }
+.selection-icon { width: 48px; height: 48px; position: relative; overflow: hidden; display: grid; place-items: center; flex: 0 0 auto; border-radius: 12px; background: rgba(255,255,255,.08); font-size: 26px; }
+.selection-base-image { width: 88%; height: 88%; object-fit: contain; filter: drop-shadow(0 3px 3px rgba(0,0,0,.25)); }
 .selection-copy { min-width: 0; display: grid; flex: 1; }
 .selection-copy small { color: #6f91ad; font-size: 9px; font-weight: 800; letter-spacing: .04em; }
 .selection-copy strong { font-size: 14px; }
@@ -68,10 +89,55 @@ h1 { margin: 0; font-size: 20px; line-height: 1; letter-spacing: .05em; }
 .selection-empty { color: #8299ad; font-size: 12px; }
 .primary-action { border: 0; border-radius: 10px; padding: 10px 14px; color: #0a1a28; background: #f0b72f; font-size: 11px; font-weight: 900; }
 .primary-action:disabled { opacity: .55; cursor: default; }
-.bottom-nav { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; padding: 9px 8px 12px; background: #091522; border-top: 1px solid rgba(255,255,255,.08); }
-.bottom-nav button { min-width: 0; min-height: 58px; display: grid; justify-items: center; align-content: center; gap: 4px; border: 0; border-radius: 12px; color: #90a4b8; background: transparent; }
-.bottom-nav button svg { width: 21px; height: 21px; }
-.bottom-nav button span { font-size: 9px; font-weight: 800; text-transform: uppercase; }
-.bottom-nav button.active { color: white; background: linear-gradient(180deg, #1e72b7, #124a79); box-shadow: inset 0 0 0 1px rgba(255,255,255,.12); }
-@media (prefers-reduced-motion: reduce) { .gem-spawn { animation: none; } }
-@media (max-width: 460px) { .game-shell { padding: 0; } .game-phone { width: 100%; min-height: 100vh; border: 0; border-radius: 0; box-shadow: none; } .map-viewport { height: 570px; } }
+
+.bottom-nav {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 5px;
+  padding: 8px 7px 10px;
+  background: linear-gradient(180deg, #0b1928, #07111d);
+  border-top: 1px solid rgba(255,255,255,.1);
+}
+.bottom-nav button {
+  min-width: 0;
+  min-height: 76px;
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 1px;
+  padding: 3px 2px 5px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  color: #d8e7f5;
+  background: transparent;
+  cursor: pointer;
+}
+.bottom-nav .nav-art {
+  width: 52px;
+  height: 52px;
+  object-fit: contain;
+  display: block;
+  filter: drop-shadow(0 3px 3px rgba(0,0,0,.35));
+  transition: transform .15s ease, filter .15s ease;
+}
+.bottom-nav button span { font-size: 8px; line-height: 1; font-weight: 900; text-transform: uppercase; text-shadow: 0 1px 2px rgba(0,0,0,.8); }
+.bottom-nav button.active {
+  color: white;
+  border-color: rgba(75,183,255,.72);
+  background: linear-gradient(180deg, rgba(27,120,201,.72), rgba(16,68,117,.88));
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.12), 0 0 12px rgba(44,151,235,.24);
+}
+.bottom-nav button.active .nav-art { transform: translateY(-2px) scale(1.04); filter: drop-shadow(0 4px 4px rgba(0,0,0,.4)) brightness(1.08); }
+
+@media (prefers-reduced-motion: reduce) {
+  .gem-spawn { animation: none; }
+  .bottom-nav .nav-art { transition: none; }
+}
+
+@media (max-width: 460px) {
+  .game-shell { padding: 0; }
+  .game-phone { width: 100%; min-height: 100vh; border: 0; border-radius: 0; box-shadow: none; }
+  .map-viewport { height: 570px; }
+  .bottom-nav .nav-art { width: 48px; height: 48px; }
+  .bottom-nav button { min-height: 72px; }
+}
