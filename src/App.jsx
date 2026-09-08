@@ -42,7 +42,7 @@ export default function App() {
   const [scale, setScale] = useState(INITIAL_SCALE)
   const [offset, setOffset] = useState({ x: -1500, y: -1500 })
   const [nextGemIn, setNextGemIn] = useState(GEM_SPAWN_MS)
-  const [notice, setNotice] = useState('Mapa 50×50. Busca una coordenada exacta o pulsa + Jugador para probar nuevas bases.')
+  const [notice, setNotice] = useState('Mapa 50×50. Toca recursos, bases, enemigos, gemas, misiones o escombros para ver su ficha.')
   const [playerNumber, setPlayerNumber] = useState(2)
   const [activeMenu, setActiveMenu] = useState('home')
   const [coordQuery, setCoordQuery] = useState('')
@@ -135,51 +135,162 @@ export default function App() {
 
   function onPointerDown(event) {
     if (event.target.closest('.map-search, .zoom-controls, .tile-popup')) return
-    event.currentTarget.setPointerCapture(event.pointerId)
-    drag.current = { pointerX: event.clientX, pointerY: event.clientY, offsetX: offset.x, offsetY: offset.y, moved: false }
+    drag.current = {
+      pointerId: event.pointerId,
+      pointerX: event.clientX,
+      pointerY: event.clientY,
+      offsetX: offset.x,
+      offsetY: offset.y,
+      moved: false,
+    }
   }
 
   function onPointerMove(event) {
     if (!drag.current) return
     const dx = event.clientX - drag.current.pointerX
     const dy = event.clientY - drag.current.pointerY
-    if (Math.abs(dx) + Math.abs(dy) > 8) drag.current.moved = true
+    if (!drag.current.moved && Math.abs(dx) + Math.abs(dy) > 8) {
+      drag.current.moved = true
+      try { event.currentTarget.setPointerCapture(event.pointerId) } catch {}
+    }
+    if (!drag.current.moved) return
     setOffset(clampOffset({ x: drag.current.offsetX + dx, y: drag.current.offsetY + dy }))
   }
 
-  function onPointerUp() {
+  function onPointerUp(event) {
     setOffset((current) => clampOffset(current))
+    if (drag.current?.moved) {
+      try { event.currentTarget.releasePointerCapture(event.pointerId) } catch {}
+    }
     window.setTimeout(() => { drag.current = null }, 0)
   }
 
   function isImportantTile(tile) {
     const def = TILE_TYPES[tile.type]
-    return tile.isPlayerBase || def.resource || ['enemy', 'mission'].includes(def.role) || tile.type === 'decorativeA'
+    return Boolean(tile.isPlayerBase || def.resource || ['enemy', 'mission'].includes(def.role) || tile.type === 'decorativeA')
   }
 
   function selectTile(tile) {
     if (drag.current?.moved) return
     setSelectedId(tile.id)
-    setPopupOpen(isImportantTile(tile))
+    if (isImportantTile(tile)) {
+      setPopupOpen(true)
+      setNotice(`(${tile.worldX}, ${tile.worldY}) · ${tile.isPlayerBase ? 'Base del jugador' : TILE_TYPES[tile.type].name}`)
+    } else {
+      setPopupOpen(false)
+    }
   }
 
   function popupData(tile) {
     const def = TILE_TYPES[tile.type]
+    const tileLabel = `Tile ${def.tileNumber}`
+
     if (tile.isPlayerBase) return {
       title: 'Base del jugador',
       subtitle: tile.owner,
-      lines: ['Centro del reino', 'Terreno base: Tile 1', 'Desde aquí se gestionarán edificios, defensa y tropas.'],
+      lines: [
+        'Centro del reino',
+        `Posición: (${tile.worldX}, ${tile.worldY})`,
+        'Terreno base: Tile 1',
+        'Desde aquí se gestionarán edificios, defensa y tropas.',
+      ],
       image: BASE_ASSET,
       action: 'Ver base',
     }
-    if (def.resource === 'wood') return { title: 'Bosque de madera', subtitle: 'Recurso · Madera', lines: ['Puede ser recolectado u ocupado.', 'Recurso útil para construcciones y mejoras.'], image: def.assets?.[0], action: 'Recolectar' }
-    if (def.resource === 'stone') return { title: def.name, subtitle: 'Recurso · Piedra', lines: ['Puede ser explotado u ocupado.', 'Recurso para fortificaciones, edificios y mejoras.'], image: def.assets?.[0], action: 'Recolectar' }
-    if (def.resource === 'food') return { title: 'Zona de comida', subtitle: 'Recurso · Comida', lines: ['Fuente de alimento del reino.', 'Se usará para tropas, producción y mantenimiento.'], image: def.assets?.[0], action: 'Recolectar' }
-    if (def.resource === 'gems') return { title: 'Gemas doradas', subtitle: 'Evento temporal', lines: ['Aparición limitada en el mapa.', 'Farmea antes de que desaparezca y vuelva a ser Tile 1.'], image: def.assets?.[0], action: 'Farmear' }
-    if (def.role === 'enemy') return { title: 'Campamento enemigo', subtitle: 'Tile 9 · Enemigo', lines: ['Objetivo PvE/PvP del mapa.', 'Al atacarlo podrás obtener botín y progreso.'], image: def.assets?.[0], action: 'Atacar' }
-    if (def.role === 'mission') return { title: 'Punto de misión', subtitle: 'Tile 10 · Misión', lines: ['Contiene un objetivo o evento del mundo.', 'Completa la misión para reclamar recompensas.'], image: def.assets?.[0], action: 'Ver misión' }
-    if (tile.type === 'decorativeA') return { title: 'Escombros', subtitle: 'Tile 4 · Punto de interés', lines: ['Restos abandonados en el mapa.', 'Podrá usarse para exploración, loot o futuras mecánicas.'], image: def.assets?.[0], action: 'Explorar' }
-    return { title: def.name, subtitle: 'Terreno', lines: ['Casilla del mundo.'], image: def.assets?.[0], action: 'Cerrar' }
+
+    if (def.resource === 'wood') return {
+      title: 'Bosque de madera',
+      subtitle: `${tileLabel} · Recurso: Madera`,
+      lines: [
+        `Posición: (${tile.worldX}, ${tile.worldY})`,
+        'Nodo natural de madera.',
+        'Puede ser recolectado, protegido o disputado por otros jugadores.',
+        'Se usará principalmente para construcciones y mejoras.',
+      ],
+      image: def.assets?.[0],
+      action: 'Recolectar madera',
+    }
+
+    if (def.resource === 'stone') return {
+      title: def.name,
+      subtitle: `${tileLabel} · Recurso: Piedra`,
+      lines: [
+        `Posición: (${tile.worldX}, ${tile.worldY})`,
+        'Yacimiento de piedra del mapa.',
+        'Puede ser explotado, protegido o conquistado.',
+        'Se usará para fortificaciones, edificios y mejoras.',
+      ],
+      image: def.assets?.[0],
+      action: 'Extraer piedra',
+    }
+
+    if (def.resource === 'food') return {
+      title: 'Zona de comida',
+      subtitle: `${tileLabel} · Recurso: Comida`,
+      lines: [
+        `Posición: (${tile.worldX}, ${tile.worldY})`,
+        'Zona productiva de alimento.',
+        'Sostiene el crecimiento del reino y el mantenimiento de tropas.',
+      ],
+      image: def.assets?.[0],
+      action: 'Recolectar comida',
+    }
+
+    if (def.resource === 'gems') return {
+      title: 'Gemas doradas',
+      subtitle: `${tileLabel} · Evento temporal`,
+      lines: [
+        `Posición: (${tile.worldX}, ${tile.worldY})`,
+        'Aparición especial y limitada en el mapa.',
+        'Debes farmearla antes de que desaparezca y la casilla vuelva a Tile 1.',
+      ],
+      image: def.assets?.[0],
+      action: 'Farmear gemas',
+    }
+
+    if (def.role === 'enemy') return {
+      title: 'Campamento enemigo',
+      subtitle: `${tileLabel} · Enemigo`,
+      lines: [
+        `Posición: (${tile.worldX}, ${tile.worldY})`,
+        'Objetivo hostil del mapa.',
+        'Podrás atacarlo para obtener botín, progreso y control territorial.',
+      ],
+      image: def.assets?.[0],
+      action: 'Atacar',
+    }
+
+    if (def.role === 'mission') return {
+      title: 'Punto de misión',
+      subtitle: `${tileLabel} · Misión`,
+      lines: [
+        `Posición: (${tile.worldX}, ${tile.worldY})`,
+        'Contiene un objetivo o evento del mundo.',
+        'Completa sus condiciones para reclamar recompensas.',
+      ],
+      image: def.assets?.[0],
+      action: 'Ver misión',
+    }
+
+    if (tile.type === 'decorativeA') return {
+      title: 'Escombros',
+      subtitle: `${tileLabel} · Punto de interés`,
+      lines: [
+        `Posición: (${tile.worldX}, ${tile.worldY})`,
+        'Restos abandonados en el mapa.',
+        'Puede convertirse en un punto de exploración, loot o una futura ubicación estratégica.',
+      ],
+      image: def.assets?.[0],
+      action: 'Explorar',
+    }
+
+    return {
+      title: def.name,
+      subtitle: `${tileLabel} · Terreno`,
+      lines: [`Posición: (${tile.worldX}, ${tile.worldY})`, 'Casilla del mundo.'],
+      image: def.assets?.[0],
+      action: 'Cerrar',
+    }
   }
 
   function searchCoordinates(event) {
@@ -244,8 +355,16 @@ export default function App() {
           <div className="map-grid" style={{ gridTemplateColumns: `repeat(${MAP_SIZE}, ${TILE_SIZE}px)`, gridAutoRows: `${TILE_SIZE}px`, transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})` }}>
             {tiles.map((tile) => {
               const def = TILE_TYPES[tile.type]
+              const important = isImportantTile(tile)
               return (
-                <button key={tile.id} type="button" className={`tile tile-${def.role} ${tile.type === 'gems' ? 'gem-spawn' : ''} ${tile.isPlayerBase ? 'player-base' : ''} ${selectedId === tile.id ? 'selected' : ''}`} onClick={() => selectTile(tile)} aria-label={`${def.name}, coordenadas ${tile.worldX}, ${tile.worldY}`}>
+                <button
+                  key={tile.id}
+                  type="button"
+                  className={`tile tile-${def.role} ${important ? 'tile-interactive' : ''} ${tile.type === 'gems' ? 'gem-spawn' : ''} ${tile.isPlayerBase ? 'player-base' : ''} ${selectedId === tile.id ? 'selected' : ''}`}
+                  onClick={() => selectTile(tile)}
+                  aria-haspopup={important ? 'dialog' : undefined}
+                  aria-label={`${def.name}, coordenadas ${tile.worldX}, ${tile.worldY}${important ? ', abrir información' : ''}`}
+                >
                   <TileImage def={def} />
                   <span className="axis-coordinate">{tile.worldX},{tile.worldY}</span>
                   {tile.isPlayerBase && <img className="base-layer" src={BASE_ASSET} alt="" draggable="false" aria-hidden="true" />}
@@ -263,7 +382,7 @@ export default function App() {
           <div className="gem-status"><span className="gem-dot">◆</span><div><strong>{activeGemCount}/{MAX_ACTIVE_GEMS} gemas</strong><small>Nueva en {Math.ceil(nextGemIn / 1000)}s</small></div></div>
 
           {popupOpen && selected && detail && (
-            <section className="tile-popup" aria-label="Información de la casilla">
+            <section className="tile-popup" role="dialog" aria-modal="false" aria-label="Información de la casilla">
               <button className="popup-close" type="button" onClick={() => setPopupOpen(false)} aria-label="Cerrar"><X size={20} /></button>
               <div className="popup-art"><img src={detail.image} alt="" /></div>
               <div className="popup-copy">
@@ -272,7 +391,7 @@ export default function App() {
                 <strong>{detail.subtitle}</strong>
                 {detail.lines.map((line) => <p key={line}>{line}</p>)}
               </div>
-              <button type="button" className="popup-action">{detail.action}</button>
+              <button type="button" className="popup-action" onClick={() => setNotice(`${detail.action}: (${selected.worldX}, ${selected.worldY}) · ${detail.title}`)}>{detail.action}</button>
             </section>
           )}
         </div>
