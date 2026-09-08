@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Crosshair, Crown, Hammer, Map, Shield, Store, Swords, ZoomIn, ZoomOut } from 'lucide-react'
-import { TILE_TYPES, assignRandomPlayerBase, generateMap, removeOldestGemTile, spawnGemTile } from './data/tileTypes'
+import { Crosshair, Crown, Map, ZoomIn, ZoomOut } from 'lucide-react'
+import { TILE_TYPES, assignPlayerBase, assignRandomPlayerBase, generateMap, removeOldestGemTile, spawnGemTile } from './data/tileTypes'
 
 const MAP_SIZE = 25
 const TILE_SIZE = 112
@@ -9,22 +9,39 @@ const MAX_ACTIVE_GEMS = 4
 const CENTER_INDEX = Math.floor(MAP_SIZE / 2)
 const CENTER_ID = `${CENTER_INDEX}-${CENTER_INDEX}`
 const INITIAL_SCALE = 0.68
+const DEMO_BASE = { worldX: 4, worldY: -3 }
+const DEMO_BASE_ID = `${DEMO_BASE.worldX + CENTER_INDEX}-${CENTER_INDEX - DEMO_BASE.worldY}`
+const BASE_ASSET = '/assets/ui/base.png'
+
+const MENU_ITEMS = [
+  { id: 'battle', label: 'Batalla', src: '/assets/ui/battle.png' },
+  { id: 'build', label: 'Construir', src: '/assets/ui/build.png' },
+  { id: 'home', label: 'Inicio', src: '/assets/ui/home.png' },
+  { id: 'clan', label: 'Clan', src: '/assets/ui/clan.png' },
+  { id: 'market', label: 'Mercado', src: '/assets/ui/market.png' },
+]
 
 function TileImage({ def }) {
   const src = def.assets?.[0]
   if (!src) return <span className="tile-fallback visible">{def.fallback}</span>
-  return <><img src={src} alt="" draggable="false" /><span className="tile-fallback">{def.fallback}</span></>
+  return <><img className="terrain-image" src={src} alt="" draggable="false" /><span className="tile-fallback">{def.fallback}</span></>
 }
 
 export default function App() {
-  const initialMap = useMemo(() => generateMap(MAP_SIZE), [])
+  const initialMap = useMemo(() => {
+    const generated = generateMap(MAP_SIZE)
+    const demo = assignPlayerBase(generated, DEMO_BASE_ID, 'Jugador 01')
+    return demo.assigned ? demo.tiles : generated
+  }, [])
+
   const [tiles, setTiles] = useState(initialMap)
-  const [selectedId, setSelectedId] = useState(CENTER_ID)
+  const [selectedId, setSelectedId] = useState(DEMO_BASE_ID)
   const [scale, setScale] = useState(INITIAL_SCALE)
   const [offset, setOffset] = useState({ x: -735, y: -660 })
   const [nextGemIn, setNextGemIn] = useState(GEM_SPAWN_MS)
-  const [notice, setNotice] = useState('Alta de jugador: ubicación aleatoria balanceada entre los 4 segmentos del mapa.')
-  const [playerNumber, setPlayerNumber] = useState(1)
+  const [notice, setNotice] = useState('Base demo en (4, -3). Pulsa + Jugador para probar nuevas posiciones aleatorias y la redistribución inicial de recursos.')
+  const [playerNumber, setPlayerNumber] = useState(2)
+  const [activeMenu, setActiveMenu] = useState('home')
   const drag = useRef(null)
   const viewportRef = useRef(null)
 
@@ -39,16 +56,33 @@ export default function App() {
     const worldHeight = MAP_SIZE * TILE_SIZE * atScale
     const minX = Math.min(0, rect.width - worldWidth)
     const minY = Math.min(0, rect.height - worldHeight)
-    return { x: Math.min(0, Math.max(minX, nextOffset.x)), y: Math.min(0, Math.max(minY, nextOffset.y)) }
+    return {
+      x: Math.min(0, Math.max(minX, nextOffset.x)),
+      y: Math.min(0, Math.max(minY, nextOffset.y)),
+    }
   }
 
-  function centeredOffset(atScale = scale) {
+  function tileCenteredOffset(worldX, worldY, atScale = scale) {
     const viewport = viewportRef.current
     if (!viewport) return offset
     const rect = viewport.getBoundingClientRect()
-    const centerOfOriginTile = (CENTER_INDEX + 0.5) * TILE_SIZE * atScale
-    return clampOffset({ x: rect.width / 2 - centerOfOriginTile, y: rect.height / 2 - centerOfOriginTile }, atScale)
+    const gridX = worldX + CENTER_INDEX
+    const gridY = CENTER_INDEX - worldY
+    const tileCenterX = (gridX + 0.5) * TILE_SIZE * atScale
+    const tileCenterY = (gridY + 0.5) * TILE_SIZE * atScale
+    return clampOffset({
+      x: rect.width / 2 - tileCenterX,
+      y: rect.height / 2 - tileCenterY,
+    }, atScale)
   }
+
+  function focusTile(worldX, worldY, atScale = scale) {
+    requestAnimationFrame(() => setOffset(tileCenteredOffset(worldX, worldY, atScale)))
+  }
+
+  useEffect(() => {
+    focusTile(DEMO_BASE.worldX, DEMO_BASE.worldY, INITIAL_SCALE)
+  }, [])
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -83,22 +117,29 @@ export default function App() {
     const cx = rect.width / 2
     const cy = rect.height / 2
     const ratio = nextScale / scale
-    const nextOffset = { x: cx - (cx - offset.x) * ratio, y: cy - (cy - offset.y) * ratio }
+    const nextOffset = {
+      x: cx - (cx - offset.x) * ratio,
+      y: cy - (cy - offset.y) * ratio,
+    }
     setScale(nextScale)
     setOffset(clampOffset(nextOffset, nextScale))
   }
 
   function centerOrigin() {
     setScale(INITIAL_SCALE)
-    requestAnimationFrame(() => {
-      setOffset(centeredOffset(INITIAL_SCALE))
-      setSelectedId(CENTER_ID)
-    })
+    setSelectedId(CENTER_ID)
+    focusTile(0, 0, INITIAL_SCALE)
   }
 
   function onPointerDown(event) {
     event.currentTarget.setPointerCapture(event.pointerId)
-    drag.current = { pointerX: event.clientX, pointerY: event.clientY, offsetX: offset.x, offsetY: offset.y, moved: false }
+    drag.current = {
+      pointerX: event.clientX,
+      pointerY: event.clientY,
+      offsetX: offset.x,
+      offsetY: offset.y,
+      moved: false,
+    }
   }
 
   function onPointerMove(event) {
@@ -149,15 +190,23 @@ export default function App() {
     setTiles(result.tiles)
     setSelectedId(result.target.id)
     setPlayerNumber((value) => value + 1)
-    setNotice(`${owner} asignado al segmento ${result.quadrant} en (${result.target.worldX}, ${result.target.worldY}). La casilla original pasó a Tile 1 y recibió ${result.counts.wood} madera, ${result.counts.stone} piedra y ${result.counts.food} comida a 2–3 casillas.`)
+    focusTile(result.target.worldX, result.target.worldY)
+    setNotice(`${owner} → segmento ${result.quadrant} → (${result.target.worldX}, ${result.target.worldY}). Tile convertido a terreno base; entorno: ${result.counts.wood} madera, ${result.counts.stone} piedra y ${result.counts.food} comida.`)
   }
 
   return (
     <main className="game-shell">
       <section className="game-phone" aria-label="Kingdom Wars prototype">
         <header className="top-bar">
-          <div className="brand-row"><div><p className="eyebrow">TEMPORADA 0 · MAPA 25×25</p><h1>KINGDOM WARS</h1></div><div className="king-balance"><Crown size={18} /> 120 KING</div></div>
-          <div className="resource-row"><div><span>🌲</span><strong>1.2K</strong><small>Madera</small></div><div><span>🪨</span><strong>850</strong><small>Piedra</small></div><div><span>🌾</span><strong>640</strong><small>Comida</small></div></div>
+          <div className="brand-row">
+            <div><p className="eyebrow">TEMPORADA 0 · MAPA 25×25</p><h1>KINGDOM WARS</h1></div>
+            <div className="king-balance"><Crown size={18} /> 120 KING</div>
+          </div>
+          <div className="resource-row">
+            <div><span>🌲</span><strong>1.2K</strong><small>Madera</small></div>
+            <div><span>🪨</span><strong>850</strong><small>Piedra</small></div>
+            <div><span>🌾</span><strong>640</strong><small>Comida</small></div>
+          </div>
         </header>
 
         <div ref={viewportRef} className="map-viewport" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
@@ -171,23 +220,48 @@ export default function App() {
                 <button key={tile.id} type="button" className={`tile tile-${def.role} ${tile.type === 'gems' ? 'gem-spawn' : ''} ${tile.isPlayerBase ? 'player-base' : ''} ${onXAxis ? 'axis-x' : ''} ${onYAxis ? 'axis-y' : ''} ${isOrigin ? 'origin' : ''} ${selectedId === tile.id ? 'selected' : ''}`} onClick={() => selectTile(tile)} aria-label={`${def.name}, coordenadas ${tile.worldX}, ${tile.worldY}`}>
                   <TileImage def={def} />
                   {(onXAxis || onYAxis) && <span className="axis-coordinate">{tile.worldX},{tile.worldY}</span>}
-                  {tile.isPlayerBase && <span className="base-marker" aria-hidden="true">🏰</span>}
+                  {tile.isPlayerBase && <img className="base-layer" src={BASE_ASSET} alt="" draggable="false" aria-hidden="true" />}
                 </button>
               )
             })}
           </div>
-          <div className="zoom-controls"><button type="button" onPointerDown={(e) => e.stopPropagation()} onClick={() => zoom(0.1)} aria-label="Acercar"><ZoomIn /></button><button type="button" onPointerDown={(e) => e.stopPropagation()} onClick={() => zoom(-0.1)} aria-label="Alejar"><ZoomOut /></button><button type="button" onPointerDown={(e) => e.stopPropagation()} onClick={centerOrigin} aria-label="Centrar en cero cero"><Crosshair /></button></div>
+
+          <div className="zoom-controls">
+            <button type="button" onPointerDown={(e) => e.stopPropagation()} onClick={() => zoom(0.1)} aria-label="Acercar"><ZoomIn /></button>
+            <button type="button" onPointerDown={(e) => e.stopPropagation()} onClick={() => zoom(-0.1)} aria-label="Alejar"><ZoomOut /></button>
+            <button type="button" onPointerDown={(e) => e.stopPropagation()} onClick={centerOrigin} aria-label="Centrar en cero cero"><Crosshair /></button>
+          </div>
           <div className="map-badge"><Map size={15} /> X: −12…12 · Y: −12…12</div>
           <div className="gem-status"><span className="gem-dot">◆</span><div><strong>{activeGemCount}/{MAX_ACTIVE_GEMS} gemas</strong><small>Nueva en {Math.ceil(nextGemIn / 1000)}s</small></div></div>
         </div>
 
-        <div className="notice-bar"><span>{notice}</span><button type="button" className="spawn-player-button" onClick={simulatePlayerJoin}>+ Jugador</button></div>
+        <div className="notice-bar">
+          <span>{notice}</span>
+          <button type="button" className="spawn-player-button" onClick={simulatePlayerJoin}>+ Jugador</button>
+        </div>
 
         <section className="selection-panel">
-          {selected ? <><div className="selection-icon">{selected.isPlayerBase ? '🏰' : TILE_TYPES[selected.type].fallback}</div><div className="selection-copy"><small>COORD. ({selected.worldX}, {selected.worldY}) · TILE {TILE_TYPES[selected.type].tileNumber}</small><strong>{selected.isPlayerBase ? 'Base del jugador' : TILE_TYPES[selected.type].name}</strong><span>{tileDescription(selected)}</span></div><button type="button" className="primary-action" disabled={selected.isPlayerBase}>{primaryLabel(selected)}</button></> : <div className="selection-empty">Arrastra para explorar. Toca una casilla para inspeccionarla.</div>}
+          {selected ? <>
+            <div className="selection-icon">
+              {selected.isPlayerBase ? <img className="selection-base-image" src={BASE_ASSET} alt="" /> : TILE_TYPES[selected.type].fallback}
+            </div>
+            <div className="selection-copy">
+              <small>COORD. ({selected.worldX}, {selected.worldY}) · TILE {TILE_TYPES[selected.type].tileNumber}</small>
+              <strong>{selected.isPlayerBase ? 'Base del jugador' : TILE_TYPES[selected.type].name}</strong>
+              <span>{tileDescription(selected)}</span>
+            </div>
+            <button type="button" className="primary-action" disabled={selected.isPlayerBase}>{primaryLabel(selected)}</button>
+          </> : <div className="selection-empty">Arrastra para explorar. Toca una casilla para inspeccionarla.</div>}
         </section>
 
-        <nav className="bottom-nav" aria-label="Navegación principal"><button type="button"><Swords /><span>Batalla</span></button><button type="button"><Hammer /><span>Construir</span></button><button type="button" className="active"><Crown /><span>Reino</span></button><button type="button"><Shield /><span>Clan</span></button><button type="button"><Store /><span>Mercado</span></button></nav>
+        <nav className="bottom-nav" aria-label="Navegación principal">
+          {MENU_ITEMS.map((item) => (
+            <button key={item.id} type="button" className={activeMenu === item.id ? 'active' : ''} onClick={() => setActiveMenu(item.id)}>
+              <img className="nav-art" src={item.src} alt="" draggable="false" />
+              <span>{item.label}</span>
+            </button>
+          ))}
+        </nav>
       </section>
     </main>
   )
