@@ -4,7 +4,7 @@ export const TILE_TYPES = {
     tileNumber: 1,
     role: 'base',
     fallback: '❄️',
-    assets: ['/assets/tiles/tile1.png', '/assets/tiles/tile1.webp', '/assets/tiles/1.png', '/assets/tiles/1.webp'],
+    assets: ['/assets/tiles/tile1.png'],
   },
   wood: {
     name: 'Bosque de madera',
@@ -12,7 +12,7 @@ export const TILE_TYPES = {
     role: 'resource',
     resource: 'wood',
     fallback: '🌲',
-    assets: ['/assets/tiles/tile2.png', '/assets/tiles/tile2.webp', '/assets/tiles/2.png', '/assets/tiles/2.webp'],
+    assets: ['/assets/tiles/tile2.png'],
   },
   stoneA: {
     name: 'Cantera',
@@ -20,14 +20,14 @@ export const TILE_TYPES = {
     role: 'resource',
     resource: 'stone',
     fallback: '🪨',
-    assets: ['/assets/tiles/tile3.png', '/assets/tiles/tile3.webp', '/assets/tiles/3.png', '/assets/tiles/3.webp'],
+    assets: ['/assets/tiles/tile3.png'],
   },
-  decorativeA: {
-    name: 'Terreno decorativo',
+  rubble: {
+    name: 'Escombros',
     tileNumber: 4,
     role: 'decorative',
-    fallback: '🏔️',
-    assets: ['/assets/tiles/tile4.png', '/assets/tiles/tile4.webp', '/assets/tiles/4.png', '/assets/tiles/4.webp'],
+    fallback: '🏚️',
+    assets: ['/assets/tiles/tile4.png'],
   },
   stoneB: {
     name: 'Yacimiento de piedra',
@@ -35,7 +35,7 @@ export const TILE_TYPES = {
     role: 'resource',
     resource: 'stone',
     fallback: '⛏️',
-    assets: ['/assets/tiles/tile5.png', '/assets/tiles/tile5.webp', '/assets/tiles/5.png', '/assets/tiles/5.webp'],
+    assets: ['/assets/tiles/tile5.png'],
   },
   gems: {
     name: 'Gemas doradas',
@@ -43,14 +43,14 @@ export const TILE_TYPES = {
     role: 'event',
     resource: 'gems',
     fallback: '💎',
-    assets: ['/assets/tiles/tile6.png', '/assets/tiles/tile6.webp', '/assets/tiles/6.png', '/assets/tiles/6.webp'],
+    assets: ['/assets/tiles/tile6.png'],
   },
   decorativeB: {
     name: 'Terreno decorativo',
     tileNumber: 7,
     role: 'decorative',
     fallback: '💧',
-    assets: ['/assets/tiles/tile7.png', '/assets/tiles/tile7.webp', '/assets/tiles/7.png', '/assets/tiles/7.webp'],
+    assets: ['/assets/tiles/tile7.png'],
   },
   food: {
     name: 'Zona de comida',
@@ -58,54 +58,134 @@ export const TILE_TYPES = {
     role: 'resource',
     resource: 'food',
     fallback: '🌾',
-    assets: ['/assets/tiles/tile8.png', '/assets/tiles/tile8.webp', '/assets/tiles/8.png', '/assets/tiles/8.webp'],
+    assets: ['/assets/tiles/tile8.png'],
   },
   enemy: {
     name: 'Campamento enemigo',
     tileNumber: 9,
     role: 'enemy',
     fallback: '⚔️',
-    assets: ['/assets/tiles/tile9.png', '/assets/tiles/tile9.webp', '/assets/tiles/9.png', '/assets/tiles/9.webp'],
+    assets: ['/assets/tiles/tile9.png'],
   },
   mission: {
     name: 'Misión',
     tileNumber: 10,
     role: 'mission',
     fallback: '📜',
-    assets: ['/assets/tiles/tile10.png', '/assets/tiles/tile10.webp', '/assets/tiles/10.png', '/assets/tiles/10.webp'],
+    assets: ['/assets/tiles/tile10.png'],
   },
 }
 
 function hash(x, y, salt = 0) {
-  let value = Math.imul(x + 11 + salt, 374761393) + Math.imul(y + 17, 668265263)
-  value = (value ^ (value >>> 13)) * 1274126177
+  let value = Math.imul(x + 101 + salt, 374761393) + Math.imul(y + 131, 668265263)
+  value = Math.imul(value ^ (value >>> 13), 1274126177)
   return (value ^ (value >>> 16)) >>> 0
 }
 
-export function generateMap(size = 30) {
-  return Array.from({ length: size * size }, (_, index) => {
-    const x = index % size
-    const y = Math.floor(index / size)
-    const roll = hash(x, y) % 1000
-    let type = 'base'
-
-    // El mapa es principalmente Tile 1 para que visualmente se lea como un terreno continuo.
-    // Los recursos y puntos de interés son relativamente raros y estratégicos.
-    if (roll < 78) type = 'wood'             // 7.8% madera
-    else if (roll < 120) type = 'stoneA'     // 4.2% piedra variante A
-    else if (roll < 154) type = 'stoneB'     // 3.4% piedra variante B
-    else if (roll < 192) type = 'food'       // 3.8% comida
-    else if (roll < 207) type = 'enemy'      // 1.5% enemigos
-    else if (roll < 216) type = 'mission'    // 0.9% misiones
-    else if (roll < 246) type = 'decorativeA' // 3% decoración
-    else if (roll < 272) type = 'decorativeB' // 2.6% decoración
-
-    return { id: `${x}-${y}`, x, y, type, baseType: type }
+function seededOrder(items, seedX, seedY) {
+  return [...items].sort((a, b) => {
+    const ah = hash(a.worldX + seedX, a.worldY + seedY, 17)
+    const bh = hash(b.worldX + seedX, b.worldY + seedY, 17)
+    return ah - bh
   })
 }
 
+export function generateMap(size = 25) {
+  const half = Math.floor(size / 2)
+
+  return Array.from({ length: size * size }, (_, index) => {
+    const gridX = index % size
+    const gridY = Math.floor(index / size)
+    const worldX = gridX - half
+    const worldY = half - gridY
+    const roll = hash(worldX, worldY) % 1000
+    let type = 'base'
+
+    // Mundo general: Tile 1 domina y el resto añade variedad estratégica/visual.
+    if (roll < 74) type = 'wood'
+    else if (roll < 116) type = 'stoneA'
+    else if (roll < 150) type = 'stoneB'
+    else if (roll < 188) type = 'food'
+    else if (roll < 203) type = 'enemy'
+    else if (roll < 212) type = 'mission'
+    else if (roll < 246) type = 'rubble'
+    else if (roll < 274) type = 'decorativeB'
+
+    // El 0,0 queda preparado como escombros para visualizar el alta de un jugador.
+    if (worldX === 0 && worldY === 0) type = 'rubble'
+
+    return {
+      id: `${gridX}-${gridY}`,
+      gridX,
+      gridY,
+      worldX,
+      worldY,
+      type,
+      isPlayerBase: false,
+      owner: null,
+    }
+  })
+}
+
+export function assignPlayerBase(tiles, targetId, owner = 'Jugador 01') {
+  const target = tiles.find((tile) => tile.id === targetId)
+  if (!target || target.type !== 'rubble' || target.isPlayerBase) {
+    return { tiles, assigned: false, reason: 'La base solo puede fundarse sobre una casilla de escombros.' }
+  }
+
+  // Distancia de 2 a 3 casillas usando distancia Chebyshev: forma un anillo cuadrado.
+  const ring = tiles.filter((tile) => {
+    if (tile.id === target.id || tile.isPlayerBase) return false
+    const dx = Math.abs(tile.worldX - target.worldX)
+    const dy = Math.abs(tile.worldY - target.worldY)
+    const distance = Math.max(dx, dy)
+    return distance >= 2 && distance <= 3
+  })
+
+  const ordered = seededOrder(ring, target.worldX, target.worldY)
+  const woodCount = 2 + (hash(target.worldX, target.worldY, 31) % 2)
+  const stoneCount = 2 + (hash(target.worldX, target.worldY, 47) % 2)
+  const foodCount = 4
+  const needed = woodCount + stoneCount + foodCount
+
+  if (ordered.length < needed) {
+    return { tiles, assigned: false, reason: 'No hay espacio suficiente alrededor de esta casilla.' }
+  }
+
+  const replacements = new Map()
+  let cursor = 0
+
+  for (let i = 0; i < woodCount; i += 1) replacements.set(ordered[cursor++].id, 'wood')
+  for (let i = 0; i < stoneCount; i += 1) {
+    const tile = ordered[cursor++]
+    replacements.set(tile.id, i % 2 === 0 ? 'stoneA' : 'stoneB')
+  }
+  for (let i = 0; i < foodCount; i += 1) replacements.set(ordered[cursor++].id, 'food')
+
+  const nextTiles = tiles.map((tile) => {
+    if (tile.id === target.id) {
+      return {
+        ...tile,
+        previousType: tile.type,
+        type: 'base',
+        isPlayerBase: true,
+        owner,
+      }
+    }
+
+    const replacement = replacements.get(tile.id)
+    return replacement ? { ...tile, type: replacement } : tile
+  })
+
+  return {
+    tiles: nextTiles,
+    assigned: true,
+    counts: { wood: woodCount, stone: stoneCount, food: foodCount },
+  }
+}
+
 export function spawnGemTile(tiles) {
-  const candidates = tiles.filter((tile) => tile.type === 'base')
+  const candidates = tiles.filter((tile) => tile.type === 'base' && !tile.isPlayerBase)
   if (!candidates.length) return tiles
 
   const chosen = candidates[Math.floor(Math.random() * candidates.length)]
