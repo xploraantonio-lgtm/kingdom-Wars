@@ -2,13 +2,13 @@ export const TILE_TYPES = {
   base: { name: 'Terreno nevado', tileNumber: 1, role: 'base', fallback: '❄️', assets: ['/assets/tiles/tile1.png'] },
   wood: { name: 'Bosque de madera', tileNumber: 2, role: 'resource', resource: 'wood', fallback: '🌲', assets: ['/assets/tiles/tile2.png'] },
   stoneA: { name: 'Cantera', tileNumber: 3, role: 'resource', resource: 'stone', fallback: '🪨', assets: ['/assets/tiles/tile3.png'] },
-  decorativeA: { name: 'Ruinas nevadas', tileNumber: 4, role: 'decorative', fallback: '🏚️', assets: ['/assets/tiles/tile4.png'] },
+  decorativeA: { name: 'Terreno decorativo', tileNumber: 4, role: 'decorative', fallback: '❄️', assets: ['/assets/tiles/tile4.png'] },
   stoneB: { name: 'Yacimiento de piedra', tileNumber: 5, role: 'resource', resource: 'stone', fallback: '⛏️', assets: ['/assets/tiles/tile5.png'] },
   gems: { name: 'Gemas doradas', tileNumber: 6, role: 'event', resource: 'gems', fallback: '💎', assets: ['/assets/tiles/tile6.png'] },
   decorativeB: { name: 'Terreno decorativo', tileNumber: 7, role: 'decorative', fallback: '💧', assets: ['/assets/tiles/tile7.png'] },
   food: { name: 'Zona de comida', tileNumber: 8, role: 'resource', resource: 'food', fallback: '🌾', assets: ['/assets/tiles/tile8.png'] },
   enemy: { name: 'Campamento enemigo', tileNumber: 9, role: 'enemy', fallback: '⚔️', assets: ['/assets/tiles/tile9.png'] },
-  mission: { name: 'Misión', tileNumber: 10, role: 'mission', fallback: '📜', assets: ['/assets/tiles/tile10.png'] },
+  rubble: { name: 'Escombros', tileNumber: 10, role: 'rubble', fallback: '🏚️', assets: ['/assets/tiles/tile10.png'] },
 }
 
 function hash(x, y, salt = 0) {
@@ -44,7 +44,7 @@ export function generateMap(size = 25) {
     else if (roll < 150) type = 'stoneB'
     else if (roll < 188) type = 'food'
     else if (roll < 203) type = 'enemy'
-    else if (roll < 212) type = 'mission'
+    else if (roll < 220) type = 'rubble'
     else if (roll < 246) type = 'decorativeA'
     else if (roll < 274) type = 'decorativeB'
 
@@ -103,9 +103,7 @@ export function assignRandomPlayerBase(tiles, owner = 'Jugador') {
   const existingBases = tiles.filter((tile) => tile.isPlayerBase)
   const candidates = tiles.filter((tile) => {
     if (tile.isPlayerBase || quadrantOf(tile) !== chosenQuadrant) return false
-    // 3 casillas de margen garantizan el anillo inicial completo.
     if (Math.abs(tile.worldX) > 9 || Math.abs(tile.worldY) > 9) return false
-    // Evita que dos altas pisen sus zonas iniciales de recursos.
     return existingBases.every((base) => Math.max(Math.abs(tile.worldX - base.worldX), Math.abs(tile.worldY - base.worldY)) >= 7)
   })
 
