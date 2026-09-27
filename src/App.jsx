@@ -1,6 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { Crosshair, Crown, MapPin, Search, X, ZoomIn, ZoomOut } from 'lucide-react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Crosshair, Crown, MapPin, Search, X, ZoomIn, ZoomOut, Zap, AlertTriangle, Info } from 'lucide-react'
 import { TILE_TYPES, assignPlayerBase, assignRandomPlayerBase, generateMap, removeOldestGemTile, spawnGemTile } from './data/tileTypes'
+import LandingPage from './components/LandingPage'
+import BuildView from './components/BuildView'
+import BattleView from './components/BattleView'
+import ClanView from './components/ClanView'
+import MarketView from './components/MarketView'
+import MarchModal from './components/MarchModal'
+import BattleReportModal from './components/BattleReportModal'
+import MapMarchesOverlay from './components/MapMarchesOverlay'
+import { useGameState } from './game/useGameState'
 
 const MAP_SIZE = 50
 const TILE_SIZE = 112
@@ -16,23 +25,94 @@ const MIN_COORD = -CENTER_INDEX
 const MAX_COORD = MAP_SIZE - CENTER_INDEX - 1
 
 const MENU_ITEMS = [
-  { id: 'battle', label: 'Batalla', src: '/assets/ui/battle.png' },
-  { id: 'build', label: 'Construir', src: '/assets/ui/build.png' },
-  { id: 'home', label: 'Inicio', src: '/assets/ui/home.png' },
+  { id: 'build', label: 'Mi Base', src: '/assets/ui/build.png' },
+  { id: 'home', label: 'Mapa', src: '/assets/ui/home.png' },
+  { id: 'battle', label: 'Ejército', src: '/assets/ui/battle.png' },
   { id: 'clan', label: 'Clan', src: '/assets/ui/clan.png' },
   { id: 'market', label: 'Mercado', src: '/assets/ui/market.png' },
 ]
 
-function TileImage({ def }) {
+function isImportantTile(tile) {
+  const def = TILE_TYPES[tile.type]
+  return Boolean(tile.isPlayerBase || def.resource || def.role === 'enemy' || def.role === 'rubble')
+}
+
+const TileImage = memo(function TileImage({ def }) {
   const src = def.assets?.[0]
   if (!src) return <span className="tile-fallback visible">{def.fallback}</span>
   return <><img className="terrain-image" src={src} alt="" draggable="false" /><span className="tile-fallback">{def.fallback}</span></>
-}
+})
+
+const TileButton = memo(function TileButton({ tile, def, important, isSelected, onSelect }) {
+  const isOwnBase = tile.worldX === DEMO_BASE.worldX && tile.worldY === DEMO_BASE.worldY
+
+  return (
+    <button
+      type="button"
+      tabIndex={-1}
+      className={`tile tile-${def.role} ${important ? 'tile-interactive' : ''} ${tile.type === 'gems' ? 'gem-spawn' : ''} ${isOwnBase ? 'player-base-own' : tile.isPlayerBase ? 'player-base' : ''} ${isSelected ? 'selected' : ''}`}
+      onClick={() => onSelect(tile)}
+      aria-haspopup={important ? 'dialog' : undefined}
+      aria-label={`${def.name}, coordenadas ${tile.worldX}, ${tile.worldY}${important ? ', abrir información' : ''}`}
+    >
+      <TileImage def={def} />
+      <span className="axis-coordinate">{tile.worldX},{tile.worldY}</span>
+      {tile.isPlayerBase && <img className="base-layer" src={BASE_ASSET} alt="" draggable="false" aria-hidden="true" />}
+      {isOwnBase && (
+        <div className="own-base-marker">
+          <span className="own-base-beacon"></span>
+          <span className="own-base-tag">👑 TU BASE</span>
+        </div>
+      )}
+    </button>
+  )
+})
+
+const MapGrid = memo(function MapGrid({
+  tiles,
+  selectedId,
+  onSelectTile,
+  gridRef,
+  initialStyle,
+  marches,
+  baseCoord,
+  onSpeedupMarch,
+  calculateKingCostForSec,
+}) {
+  return (
+    <div ref={gridRef} className="map-grid" style={initialStyle}>
+      {tiles.map((tile) => {
+        const def = TILE_TYPES[tile.type]
+        const important = isImportantTile(tile)
+        return (
+          <TileButton
+            key={tile.id}
+            tile={tile}
+            def={def}
+            important={important}
+            isSelected={selectedId === tile.id}
+            onSelect={onSelectTile}
+          />
+        )
+      })}
+      <MapMarchesOverlay
+        marches={marches}
+        baseCoord={baseCoord}
+        mapSize={MAP_SIZE}
+        tileSize={TILE_SIZE}
+        onSpeedupMarch={onSpeedupMarch}
+        calculateKingCostForSec={calculateKingCostForSec}
+      />
+    </div>
+  )
+})
 
 export default function App() {
+  const gameState = useGameState(DEMO_BASE)
+
   const initialMap = useMemo(() => {
     const generated = generateMap(MAP_SIZE)
-    const demo = assignPlayerBase(generated, DEMO_BASE_ID, 'Jugador 01')
+    const demo = assignPlayerBase(generated, DEMO_BASE_ID, 'Tu Reino (Jugador 01)')
     return demo.assigned ? demo.tiles : generated
   }, [])
 
@@ -42,51 +122,112 @@ export default function App() {
   const [scale, setScale] = useState(INITIAL_SCALE)
   const [offset, setOffset] = useState({ x: -1500, y: -1500 })
   const [nextGemIn, setNextGemIn] = useState(GEM_SPAWN_MS)
-  const [notice, setNotice] = useState('Mapa 50×50. Toca recursos, bases, enemigos, gemas o escombros para ver su ficha.')
+  const [notice, setNotice] = useState('FourKingdoms Alpha v0.1 · Toca recursos, bases, o campamentos para interactuar.')
   const [playerNumber, setPlayerNumber] = useState(2)
-  const [activeMenu, setActiveMenu] = useState('home')
+  const [activeMenu, setActiveMenu] = useState('build')
   const [coordQuery, setCoordQuery] = useState('')
-  const drag = useRef(null)
+  const [currentView, setCurrentView] = useState('landing')
+
+  // Modales
+  const [marchModalTarget, setMarchModalTarget] = useState(null) // tile
+  const [selectedReport, setSelectedReport] = useState(null)
+  const [showResourceDetails, setShowResourceDetails] = useState(false)
+
   const viewportRef = useRef(null)
+  const mapGridRef = useRef(null)
+  const cameraRef = useRef({ x: -1500, y: -1500, scale: INITIAL_SCALE })
+  const animationFrameRef = useRef(null)
+  const viewportSizeRef = useRef({ width: 430, height: 590 })
+  const activePointers = useRef(new Map())
+  const dragRef = useRef({
+    isDragging: false,
+    suppressClick: false,
+    startX: 0,
+    startY: 0,
+    lastX: 0,
+    lastY: 0,
+    lastTime: 0,
+    vx: 0,
+    vy: 0,
+    initialOffset: { x: -1500, y: -1500 },
+    initialPinchDist: 0,
+    initialPinchScale: INITIAL_SCALE,
+    initialPinchCenter: { x: 0, y: 0 },
+    initialPinchOffset: { x: -1500, y: -1500 },
+  })
 
   const selected = selectedId ? tiles.find((tile) => tile.id === selectedId) : null
   const activeGemCount = tiles.filter((tile) => tile.type === 'gems').length
 
-  function clampOffset(nextOffset, atScale = scale) {
-    const viewport = viewportRef.current
-    if (!viewport) return nextOffset
-    const rect = viewport.getBoundingClientRect()
-    const worldWidth = MAP_SIZE * TILE_SIZE * atScale
-    const worldHeight = MAP_SIZE * TILE_SIZE * atScale
-    const minX = Math.min(0, rect.width - worldWidth)
-    const minY = Math.min(0, rect.height - worldHeight)
+  // Sincronizar notificación reciente
+  useEffect(() => {
+    if (gameState.recentNotification) {
+      setNotice(gameState.recentNotification)
+    }
+  }, [gameState.recentNotification])
+
+  const applyTransform = useCallback((x, y, s) => {
+    cameraRef.current = { x, y, scale: s }
+    if (mapGridRef.current) {
+      mapGridRef.current.style.transform = `translate(${x}px, ${y}px) scale(${s})`
+    }
+  }, [])
+
+  const updateViewportSize = useCallback(() => {
+    if (viewportRef.current) {
+      const rect = viewportRef.current.getBoundingClientRect()
+      if (rect.width > 0 && rect.height > 0) {
+        viewportSizeRef.current = { width: rect.width, height: rect.height }
+      }
+    }
+  }, [])
+
+  const clampOffset = useCallback((nextOffset, atScale) => {
+    const s = atScale ?? cameraRef.current.scale
+    const { width, height } = viewportSizeRef.current
+    const worldWidth = MAP_SIZE * TILE_SIZE * s
+    const worldHeight = MAP_SIZE * TILE_SIZE * s
+    const minX = Math.min(0, width - worldWidth)
+    const minY = Math.min(0, height - worldHeight)
     return {
       x: Math.min(0, Math.max(minX, nextOffset.x)),
       y: Math.min(0, Math.max(minY, nextOffset.y)),
     }
-  }
+  }, [])
 
-  function tileCenteredOffset(worldX, worldY, atScale = scale) {
-    const viewport = viewportRef.current
-    if (!viewport) return offset
-    const rect = viewport.getBoundingClientRect()
+  const tileCenteredOffset = useCallback((worldX, worldY, atScale) => {
+    updateViewportSize()
+    const s = atScale ?? cameraRef.current.scale
+    const { width, height } = viewportSizeRef.current
     const gridX = worldX + CENTER_INDEX
     const gridY = CENTER_INDEX - worldY
-    const tileCenterX = (gridX + 0.5) * TILE_SIZE * atScale
-    const tileCenterY = (gridY + 0.5) * TILE_SIZE * atScale
+    const tileCenterX = (gridX + 0.5) * TILE_SIZE * s
+    const tileCenterY = (gridY + 0.5) * TILE_SIZE * s
     return clampOffset({
-      x: rect.width / 2 - tileCenterX,
-      y: rect.height / 2 - tileCenterY,
-    }, atScale)
-  }
+      x: width / 2 - tileCenterX,
+      y: height / 2 - tileCenterY,
+    }, s)
+  }, [clampOffset, updateViewportSize])
 
-  function focusTile(worldX, worldY, atScale = scale) {
-    requestAnimationFrame(() => setOffset(tileCenteredOffset(worldX, worldY, atScale)))
-  }
+  const focusTile = useCallback((worldX, worldY, atScale = cameraRef.current.scale) => {
+    cancelAnimationFrame(animationFrameRef.current)
+    requestAnimationFrame(() => {
+      const nextOffset = tileCenteredOffset(worldX, worldY, atScale)
+      applyTransform(nextOffset.x, nextOffset.y, atScale)
+      setOffset(nextOffset)
+      setScale(atScale)
+    })
+  }, [applyTransform, tileCenteredOffset])
 
   useEffect(() => {
-    focusTile(DEMO_BASE.worldX, DEMO_BASE.worldY, INITIAL_SCALE)
-  }, [])
+    if (currentView === 'game' && activeMenu === 'home') {
+      const timer = setTimeout(() => {
+        updateViewportSize()
+        focusTile(DEMO_BASE.worldX, DEMO_BASE.worldY, INITIAL_SCALE)
+      }, 50)
+      return () => clearTimeout(timer)
+    }
+  }, [currentView, activeMenu, focusTile, updateViewportSize])
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -106,134 +247,351 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    const recenter = () => setOffset((current) => clampOffset(current, scale))
-    recenter()
+    const recenter = () => {
+      updateViewportSize()
+      const current = cameraRef.current
+      const clamped = clampOffset(current, current.scale)
+      applyTransform(clamped.x, clamped.y, current.scale)
+      setOffset(clamped)
+    }
     window.addEventListener('resize', recenter)
     return () => window.removeEventListener('resize', recenter)
-  }, [scale])
+  }, [applyTransform, clampOffset, updateViewportSize])
 
-  function zoom(delta) {
-    const nextScale = Math.min(1.3, Math.max(0.42, Number((scale + delta).toFixed(2))))
-    if (nextScale === scale) return
-    const viewport = viewportRef.current
-    if (!viewport) return setScale(nextScale)
-    const rect = viewport.getBoundingClientRect()
-    const cx = rect.width / 2
-    const cy = rect.height / 2
-    const ratio = nextScale / scale
-    const nextOffset = { x: cx - (cx - offset.x) * ratio, y: cy - (cy - offset.y) * ratio }
+  const zoom = useCallback((delta) => {
+    cancelAnimationFrame(animationFrameRef.current)
+    updateViewportSize()
+    const currentScale = cameraRef.current.scale
+    const nextScale = Math.min(1.3, Math.max(0.42, Number((currentScale + delta).toFixed(2))))
+    if (nextScale === currentScale) return
+
+    const { width, height } = viewportSizeRef.current
+    const cx = width / 2
+    const cy = height / 2
+    const ratio = nextScale / currentScale
+    const current = cameraRef.current
+    const nextOffset = {
+      x: cx - (cx - current.x) * ratio,
+      y: cy - (cy - current.y) * ratio,
+    }
+    const clamped = clampOffset(nextOffset, nextScale)
+    applyTransform(clamped.x, clamped.y, nextScale)
     setScale(nextScale)
-    setOffset(clampOffset(nextOffset, nextScale))
-  }
+    setOffset(clamped)
+  }, [applyTransform, clampOffset, updateViewportSize])
 
-  function centerOrigin() {
-    setScale(INITIAL_SCALE)
+  const centerOrigin = useCallback(() => {
+    cancelAnimationFrame(animationFrameRef.current)
     setSelectedId(CENTER_ID)
     setPopupOpen(false)
     focusTile(0, 0, INITIAL_SCALE)
-  }
+  }, [focusTile])
 
   function onPointerDown(event) {
-    if (event.target.closest('.map-search, .zoom-controls, .tile-popup')) return
-    drag.current = {
-      pointerId: event.pointerId,
-      pointerX: event.clientX,
-      pointerY: event.clientY,
-      offsetX: offset.x,
-      offsetY: offset.y,
-      moved: false,
+    if (event.target.closest('.map-search, .zoom-controls, .tile-popup, .floating-marches-bar')) return
+
+    cancelAnimationFrame(animationFrameRef.current)
+    updateViewportSize()
+
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId)
+    } catch {}
+
+    activePointers.current.set(event.pointerId, {
+      x: event.clientX,
+      y: event.clientY,
+    })
+
+    const ptrs = Array.from(activePointers.current.values())
+
+    if (ptrs.length === 1) {
+      dragRef.current = {
+        isDragging: false,
+        suppressClick: false,
+        startX: event.clientX,
+        startY: event.clientY,
+        lastX: event.clientX,
+        lastY: event.clientY,
+        lastTime: performance.now(),
+        vx: 0,
+        vy: 0,
+        initialOffset: { ...cameraRef.current },
+        initialPinchDist: 0,
+        initialPinchScale: cameraRef.current.scale,
+        initialPinchCenter: { x: 0, y: 0 },
+        initialPinchOffset: { ...cameraRef.current },
+      }
+    } else if (ptrs.length === 2) {
+      const p1 = ptrs[0]
+      const p2 = ptrs[1]
+      const dist = Math.hypot(p2.x - p1.x, p2.y - p1.y)
+      const center = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 }
+      dragRef.current.isDragging = true
+      dragRef.current.suppressClick = true
+      dragRef.current.initialPinchDist = dist
+      dragRef.current.initialPinchScale = cameraRef.current.scale
+      dragRef.current.initialPinchCenter = center
+      dragRef.current.initialPinchOffset = { ...cameraRef.current }
+      dragRef.current.vx = 0
+      dragRef.current.vy = 0
     }
   }
 
   function onPointerMove(event) {
-    if (!drag.current) return
-    const dx = event.clientX - drag.current.pointerX
-    const dy = event.clientY - drag.current.pointerY
-    if (!drag.current.moved && Math.abs(dx) + Math.abs(dy) > 8) {
-      drag.current.moved = true
-      try { event.currentTarget.setPointerCapture(event.pointerId) } catch {}
+    if (!activePointers.current.has(event.pointerId)) return
+
+    activePointers.current.set(event.pointerId, {
+      x: event.clientX,
+      y: event.clientY,
+    })
+
+    const ptrs = Array.from(activePointers.current.values())
+    const drag = dragRef.current
+
+    if (ptrs.length === 1) {
+      const dx = event.clientX - drag.startX
+      const dy = event.clientY - drag.startY
+
+      if (!drag.isDragging && Math.hypot(dx, dy) > 14) {
+        drag.isDragging = true
+        drag.suppressClick = true
+      }
+
+      if (drag.isDragging) {
+        const now = performance.now()
+        const dt = Math.max(1, now - drag.lastTime)
+        const stepDx = event.clientX - drag.lastX
+        const stepDy = event.clientY - drag.lastY
+
+        const instVx = stepDx / dt
+        const instVy = stepDy / dt
+        drag.vx = drag.vx * 0.35 + instVx * 0.65
+        drag.vy = drag.vy * 0.35 + instVy * 0.65
+        drag.lastX = event.clientX
+        drag.lastY = event.clientY
+        drag.lastTime = now
+
+        const nextOffset = clampOffset({
+          x: drag.initialOffset.x + dx,
+          y: drag.initialOffset.y + dy,
+        }, cameraRef.current.scale)
+
+        applyTransform(nextOffset.x, nextOffset.y, cameraRef.current.scale)
+      }
+    } else if (ptrs.length === 2 && drag.initialPinchDist > 0) {
+      const p1 = ptrs[0]
+      const p2 = ptrs[1]
+      const currentDist = Math.hypot(p2.x - p1.x, p2.y - p1.y)
+      const currentCenter = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 }
+
+      const scaleFactor = currentDist / drag.initialPinchDist
+      const rawScale = drag.initialPinchScale * scaleFactor
+      const nextScale = Math.min(1.3, Math.max(0.42, rawScale))
+
+      const { width, height } = viewportSizeRef.current
+      if (width > 0 && height > 0) {
+        const viewport = viewportRef.current
+        const rect = viewport ? viewport.getBoundingClientRect() : { left: 0, top: 0 }
+        const cx = drag.initialPinchCenter.x - rect.left
+        const cy = drag.initialPinchCenter.y - rect.top
+        const ratio = nextScale / drag.initialPinchScale
+
+        const panDx = currentCenter.x - drag.initialPinchCenter.x
+        const panDy = currentCenter.y - drag.initialPinchCenter.y
+
+        const nextX = cx - (cx - drag.initialPinchOffset.x) * ratio + panDx
+        const nextY = cy - (cy - drag.initialPinchOffset.y) * ratio + panDy
+
+        const clamped = clampOffset({ x: nextX, y: nextY }, nextScale)
+        applyTransform(clamped.x, clamped.y, nextScale)
+      }
     }
-    if (!drag.current.moved) return
-    setOffset(clampOffset({ x: drag.current.offsetX + dx, y: drag.current.offsetY + dy }))
   }
 
   function onPointerUp(event) {
-    setOffset((current) => clampOffset(current))
-    if (drag.current?.moved) {
-      try { event.currentTarget.releasePointerCapture(event.pointerId) } catch {}
+    if (activePointers.current.has(event.pointerId)) {
+      try {
+        event.currentTarget.releasePointerCapture(event.pointerId)
+      } catch {}
+      activePointers.current.delete(event.pointerId)
     }
-    window.setTimeout(() => { drag.current = null }, 0)
+
+    const remaining = Array.from(activePointers.current.values())
+    const drag = dragRef.current
+
+    if (remaining.length === 1) {
+      const p = remaining[0]
+      drag.startX = p.x
+      drag.startY = p.y
+      drag.lastX = p.x
+      drag.lastY = p.y
+      drag.lastTime = performance.now()
+      drag.initialOffset = { ...cameraRef.current }
+      drag.initialPinchDist = 0
+      drag.vx = 0
+      drag.vy = 0
+      return
+    }
+
+    if (remaining.length === 0) {
+      const totalDist = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY)
+
+      if (drag.isDragging && totalDist > 14) {
+        drag.suppressClick = true
+        setTimeout(() => {
+          drag.suppressClick = false
+        }, 120)
+
+        const timeSinceMove = performance.now() - drag.lastTime
+        let vx = timeSinceMove > 60 ? 0 : drag.vx * 16
+        let vy = timeSinceMove > 60 ? 0 : drag.vy * 16
+        const speed = Math.hypot(vx, vy)
+
+        if (speed > 1) {
+          const maxSpeed = 30
+          if (speed > maxSpeed) {
+            const factor = maxSpeed / speed
+            vx *= factor
+            vy *= factor
+          }
+
+          const runInertia = () => {
+            vx *= 0.92
+            vy *= 0.92
+            const current = cameraRef.current
+            const nextOffset = clampOffset({
+              x: current.x + vx,
+              y: current.y + vy,
+            }, current.scale)
+
+            if (nextOffset.x === current.x) vx = 0
+            if (nextOffset.y === current.y) vy = 0
+
+            applyTransform(nextOffset.x, nextOffset.y, current.scale)
+
+            if (Math.hypot(vx, vy) > 0.25) {
+              animationFrameRef.current = requestAnimationFrame(runInertia)
+            } else {
+              setOffset({ x: nextOffset.x, y: nextOffset.y })
+              setScale(current.scale)
+            }
+          }
+
+          animationFrameRef.current = requestAnimationFrame(runInertia)
+        } else {
+          setOffset({ x: cameraRef.current.x, y: cameraRef.current.y })
+          setScale(cameraRef.current.scale)
+        }
+      } else {
+        // Clic / Toque deliberado (sin arrastre)
+        drag.isDragging = false
+        drag.suppressClick = false
+        setOffset({ x: cameraRef.current.x, y: cameraRef.current.y })
+        setScale(cameraRef.current.scale)
+
+        // Detección directa de casilla por coordenadas absolutas
+        if (mapGridRef.current) {
+          const rect = mapGridRef.current.getBoundingClientRect()
+          const s = cameraRef.current.scale
+          const relX = (event.clientX - rect.left) / s
+          const relY = (event.clientY - rect.top) / s
+          const gx = Math.floor(relX / TILE_SIZE)
+          const gy = Math.floor(relY / TILE_SIZE)
+          if (gx >= 0 && gx < MAP_SIZE && gy >= 0 && gy < MAP_SIZE) {
+            const tileId = `${gx}-${gy}`
+            const tappedTile = tiles.find((t) => t.id === tileId)
+            if (tappedTile) {
+              selectTile(tappedTile)
+            }
+          }
+        }
+      }
+      drag.isDragging = false
+    }
   }
 
-  function isImportantTile(tile) {
-    const def = TILE_TYPES[tile.type]
-    return Boolean(tile.isPlayerBase || def.resource || def.role === 'enemy' || def.role === 'rubble')
+  function onWheel(event) {
+    event.preventDefault()
+    cancelAnimationFrame(animationFrameRef.current)
+    updateViewportSize()
+    const viewport = viewportRef.current
+    if (!viewport) return
+
+    const rect = viewport.getBoundingClientRect()
+    const cx = event.clientX - rect.left
+    const cy = event.clientY - rect.top
+
+    const zoomFactor = event.deltaY < 0 ? 1.08 : 0.92
+    const currentScale = cameraRef.current.scale
+    const nextScale = Math.min(1.3, Math.max(0.42, Number((currentScale * zoomFactor).toFixed(2))))
+    if (nextScale === currentScale) return
+
+    const ratio = nextScale / currentScale
+    const current = cameraRef.current
+    const nextOffset = {
+      x: cx - (cx - current.x) * ratio,
+      y: cy - (cy - current.y) * ratio,
+    }
+
+    const clamped = clampOffset(nextOffset, nextScale)
+    applyTransform(clamped.x, clamped.y, nextScale)
+    setScale(nextScale)
+    setOffset(clamped)
   }
 
-  function selectTile(tile) {
-    if (drag.current?.moved) return
+  const selectTile = useCallback((tile) => {
     setSelectedId(tile.id)
-    if (isImportantTile(tile)) {
-      setPopupOpen(true)
-      setNotice(`(${tile.worldX}, ${tile.worldY}) · ${tile.isPlayerBase ? 'Base del jugador' : TILE_TYPES[tile.type].name}`)
+    setPopupOpen(true)
+    const isOwn = tile.worldX === DEMO_BASE.worldX && tile.worldY === DEMO_BASE.worldY
+    if (tile.isPlayerBase) {
+      setNotice(isOwn ? `🏰 Tu Base Principal en (${tile.worldX}, ${tile.worldY})` : `Base Rival de ${tile.owner || 'Jugador'}`)
     } else {
-      setPopupOpen(false)
+      setNotice(`Casilla (${tile.worldX}, ${tile.worldY}) · ${TILE_TYPES[tile.type].name}`)
     }
-  }
+  }, [])
 
   function popupData(tile) {
     const def = TILE_TYPES[tile.type]
     const tileLabel = `Tile ${def.tileNumber}`
+    const isOwnBase = tile.worldX === DEMO_BASE.worldX && tile.worldY === DEMO_BASE.worldY
 
     if (tile.isPlayerBase) return {
-      title: 'Base del jugador',
-      subtitle: tile.owner,
-      lines: [
-        'Centro del reino',
+      title: isOwnBase ? '🏰 Tu Reino (Base Principal)' : (tile.owner || 'Base Rival'),
+      subtitle: isOwnBase ? `Coordenadas (${tile.worldX}, ${tile.worldY}) · Ciudadela Nv.${gameState.buildings.castle}` : 'Jugador Rival en los 4 Reinos',
+      lines: isOwnBase ? [
+        `🏛️ Castillo Nv.${gameState.buildings.castle} · 🛡️ Muralla Nv.${gameState.buildings.wall} · ⚔️ Cuartel Nv.${gameState.buildings.barracks}`,
+        `Producción pasiva: 🪵 +${gameState.passiveProductionPerHour.wood} / 🪨 +${gameState.passiveProductionPerHour.stone} / 🌾 +${gameState.passiveProductionPerHour.food} por hora`,
+        `Tropas en guarnición: ${gameState.troops.infantry} Infantería, ${gameState.troops.archer} Arqueros, ${gameState.troops.cavalry} Caballería`,
+      ] : [
         `Posición: (${tile.worldX}, ${tile.worldY})`,
-        'Terreno base: Tile 1',
-        'Desde aquí se gestionarán edificios, defensa y tropas.',
+        'Base rival. Asalta su ciudadela para saquear recursos y KING expuesto.',
       ],
       image: BASE_ASSET,
-      action: 'Ver base',
+      action: isOwnBase ? '🏛️ Gestionar Base y Edificios' : '⚔️ Asaltar Base (PvP)',
+      onClick: () => {
+        setPopupOpen(false)
+        if (isOwnBase) {
+          setActiveMenu('build')
+        } else {
+          setMarchModalTarget(tile)
+        }
+      },
     }
 
-    if (def.resource === 'wood') return {
-      title: 'Bosque de madera',
-      subtitle: `${tileLabel} · Recurso: Madera`,
-      lines: [
-        `Posición: (${tile.worldX}, ${tile.worldY})`,
-        'Nodo natural de madera.',
-        'Puede ser recolectado, protegido o disputado por otros jugadores.',
-        'Se usará principalmente para construcciones y mejoras.',
-      ],
-      image: def.assets?.[0],
-      action: 'Recolectar madera',
-    }
-
-    if (def.resource === 'stone') return {
+    if (def.resource === 'wood' || def.resource === 'stone' || def.resource === 'food') return {
       title: def.name,
-      subtitle: `${tileLabel} · Recurso: Piedra`,
+      subtitle: `${tileLabel} · Recurso: ${def.resource.toUpperCase()}`,
       lines: [
         `Posición: (${tile.worldX}, ${tile.worldY})`,
-        'Yacimiento de piedra del mapa.',
-        'Puede ser explotado, protegido o conquistado.',
-        'Se usará para fortificaciones, edificios y mejoras.',
+        'Nodo de recursos naturales. Envía una marcha para recolectar.',
+        `Tropas disponibles en tu ciudadela: ${gameState.troops.infantry} Inf, ${gameState.troops.archer} Arq, ${gameState.troops.cavalry} Cab`,
       ],
       image: def.assets?.[0],
-      action: 'Extraer piedra',
-    }
-
-    if (def.resource === 'food') return {
-      title: 'Zona de comida',
-      subtitle: `${tileLabel} · Recurso: Comida`,
-      lines: [
-        `Posición: (${tile.worldX}, ${tile.worldY})`,
-        'Zona productiva de alimento.',
-        'Sostiene el crecimiento del reino y el mantenimiento de tropas.',
-      ],
-      image: def.assets?.[0],
-      action: 'Recolectar comida',
+      action: 'Enviar a Recolectar',
+      onClick: () => {
+        setPopupOpen(false)
+        setMarchModalTarget(tile)
+      },
     }
 
     if (def.resource === 'gems') return {
@@ -241,43 +599,53 @@ export default function App() {
       subtitle: `${tileLabel} · Evento temporal`,
       lines: [
         `Posición: (${tile.worldX}, ${tile.worldY})`,
-        'Aparición especial y limitada en el mapa.',
-        'Debes farmearla antes de que desaparezca y la casilla vuelva a Tile 1.',
+        'Aparición especial limitada en el mapa.',
       ],
       image: def.assets?.[0],
-      action: 'Farmear gemas',
+      action: 'Recolectar Gemas',
+      onClick: () => {
+        setPopupOpen(false)
+        setMarchModalTarget(tile)
+      },
     }
 
     if (def.role === 'enemy') return {
-      title: 'Campamento enemigo',
-      subtitle: `${tileLabel} · Enemigo`,
+      title: 'Campamento Hostil (NPC)',
+      subtitle: `${tileLabel} · Campamento Enemigo`,
       lines: [
         `Posición: (${tile.worldX}, ${tile.worldY})`,
-        'Objetivo hostil del mapa.',
-        'Podrás atacarlo para obtener botín, progreso y control territorial.',
+        'Asalta este campamento hostil para conseguir botín de recursos y probabilidad de drop de KING.',
       ],
       image: def.assets?.[0],
-      action: 'Atacar',
+      action: 'Asaltar Campamento',
+      onClick: () => {
+        setPopupOpen(false)
+        setMarchModalTarget(tile)
+      },
     }
 
     if (def.role === 'rubble') return {
-      title: 'Escombros',
-      subtitle: `${tileLabel} · Punto de interés`,
+      title: 'Escombros y Ruinas',
+      subtitle: `${tileLabel} · Punto de Interés`,
       lines: [
         `Posición: (${tile.worldX}, ${tile.worldY})`,
-        'Restos abandonados en el mapa.',
-        'Puede convertirse en un punto de exploración, loot o una futura ubicación estratégica.',
+        'Restos arqueológicos. Envía una expedición para registrar los restos.',
       ],
       image: def.assets?.[0],
-      action: 'Explorar',
+      action: 'Explorar Ruinas',
+      onClick: () => {
+        setPopupOpen(false)
+        setMarchModalTarget(tile)
+      },
     }
 
     return {
       title: def.name,
       subtitle: `${tileLabel} · Terreno`,
-      lines: [`Posición: (${tile.worldX}, ${tile.worldY})`, 'Casilla del mundo.'],
+      lines: [`Posición: (${tile.worldX}, ${tile.worldY})`, 'Terreno del continente.'],
       image: def.assets?.[0],
       action: 'Cerrar',
+      onClick: () => setPopupOpen(false),
     }
   }
 
@@ -300,7 +668,7 @@ export default function App() {
     setSelectedId(tile.id)
     setPopupOpen(isImportantTile(tile))
     focusTile(worldX, worldY)
-    setNotice(`Coordenada encontrada: (${worldX}, ${worldY}) · ${tile.isPlayerBase ? 'Base del jugador' : TILE_TYPES[tile.type].name}`)
+    setNotice(`Coordenada encontrada: (${worldX}, ${worldY}) · ${tile.isPlayerBase ? 'Base de jugador' : TILE_TYPES[tile.type].name}`)
   }
 
   function simulatePlayerJoin() {
@@ -315,85 +683,350 @@ export default function App() {
     setPopupOpen(true)
     setPlayerNumber((value) => value + 1)
     focusTile(result.target.worldX, result.target.worldY)
-    setNotice(`${owner} → segmento ${result.quadrant} → (${result.target.worldX}, ${result.target.worldY}). Entorno: ${result.counts.wood} madera, ${result.counts.stone} piedra y ${result.counts.food} comida.`)
+    setNotice(`${owner} se ha establecido en (${result.target.worldX}, ${result.target.worldY}).`)
   }
 
   const detail = selected ? popupData(selected) : null
 
+  if (currentView === 'landing') {
+    return <LandingPage onPlay={() => setCurrentView('game')} />
+  }
+
   return (
     <main className="game-shell">
-      <section className="game-phone" aria-label="Kingdom Wars prototype">
+      <section className="game-phone" aria-label="FourKingdoms App">
+        {/* Barra Superior de Recursos Reales */}
         <header className="top-bar">
-          <div className="brand-row"><div><p className="eyebrow">TEMPORADA 0 · MAPA {MAP_SIZE}×{MAP_SIZE}</p><h1>KINGDOM WARS</h1></div></div>
-          <div className="resource-row resource-row-four">
-            <div><span>🌲</span><strong>1.2K</strong><small>Madera</small></div>
-            <div><span>🪨</span><strong>850</strong><small>Piedra</small></div>
-            <div><span>🌾</span><strong>640</strong><small>Comida</small></div>
-            <div className="king-resource"><Crown size={20} /><strong>120</strong><small>KING</small></div>
+          <div className="brand-row">
+            <div className="brand-title-wrap">
+              <img
+                src="/assets/ui/logo-fourkingdoms.png"
+                alt="FourKingdoms"
+                className="game-brand-logo"
+              />
+              <div>
+                <p className="eyebrow">ALPHA v0.1 · PODER ⭐ {gameState.kingdomPower.toLocaleString()}</p>
+                <h1>FOURKINGDOMS</h1>
+              </div>
+            </div>
+            <div className="top-bar-controls">
+              <button
+                type="button"
+                className="btn-top-action reset"
+                onClick={() => {
+                  if (window.confirm('¿Reiniciar partida con cuenta nueva limpia de Alpha v0.1? (1,500W, 1,500S, 1,800F, 120 KING, 10 Infanterías y edificios Nv.1)')) {
+                    gameState.resetGame()
+                    setActiveMenu('home')
+                  }
+                }}
+                title="Reiniciar a cuenta nueva"
+              >
+                🔄 Nueva Cuenta
+              </button>
+              <button
+                type="button"
+                className="btn-top-action sandbox"
+                onClick={gameState.grantTestResources}
+                title="Otorgar recursos y KING para pruebas rápidas"
+              >
+                ⚡ Sandbox
+              </button>
+              <button
+                type="button"
+                className="back-to-landing-btn"
+                onClick={() => setCurrentView('landing')}
+                title="Volver a la Landing Page"
+              >
+                ← Landing
+              </button>
+            </div>
+          </div>
+
+          <div
+            className="resource-row resource-row-four"
+            onClick={() => setShowResourceDetails(!showResourceDetails)}
+            title="Toca para ver el desglose económico"
+          >
+            <div>
+              <span>🌲</span>
+              <strong>{Math.floor(gameState.resources.wood).toLocaleString()}</strong>
+              <small>+{gameState.passiveProductionPerHour.wood}/h</small>
+            </div>
+            <div>
+              <span>🪨</span>
+              <strong>{Math.floor(gameState.resources.stone).toLocaleString()}</strong>
+              <small>+{gameState.passiveProductionPerHour.stone}/h</small>
+            </div>
+            <div className={gameState.isHungry ? 'hungry-pill' : ''}>
+              <span>🌾</span>
+              <strong>{Math.floor(gameState.resources.food).toLocaleString()}</strong>
+              <small className={gameState.isHungry ? 'red-text' : ''}>
+                {gameState.isHungry ? '¡HAMBRE!' : `-${gameState.totalFoodUpkeepPerHour}/h`}
+              </small>
+            </div>
+            <div className="king-resource">
+              <Crown size={20} />
+              <strong>{gameState.king.claimed.toFixed(0)}</strong>
+              <small>+{gameState.estimatedDailyKing}/d</small>
+            </div>
           </div>
         </header>
 
-        <div ref={viewportRef} className="map-viewport" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
-          <form className="map-search" onSubmit={searchCoordinates}>
-            <MapPin size={16} />
-            <input value={coordQuery} onChange={(e) => setCoordQuery(e.target.value)} placeholder="X,Y  ej. 4,-3" aria-label="Buscar coordenadas" />
-            <button type="submit" aria-label="Buscar"><Search size={17} /></button>
-          </form>
+        {/* Selector Rápido: Mi Base vs Mapa Mundial */}
+        <div className="view-mode-toggle">
+          <button
+            type="button"
+            className={`mode-btn ${activeMenu === 'build' ? 'active' : ''}`}
+            onClick={() => {
+              setActiveMenu('build')
+              setPopupOpen(false)
+            }}
+          >
+            🏰 Mi Ciudad / Base
+          </button>
+          <button
+            type="button"
+            className={`mode-btn ${activeMenu === 'home' ? 'active' : ''}`}
+            onClick={() => {
+              setActiveMenu('home')
+              setPopupOpen(false)
+            }}
+          >
+            🗺️ Mapa Mundial (50×50)
+          </button>
+        </div>
 
-          <div className="map-grid" style={{ gridTemplateColumns: `repeat(${MAP_SIZE}, ${TILE_SIZE}px)`, gridAutoRows: `${TILE_SIZE}px`, transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})` }}>
-            {tiles.map((tile) => {
-              const def = TILE_TYPES[tile.type]
-              const important = isImportantTile(tile)
-              return (
-                <button
-                  key={tile.id}
-                  type="button"
-                  className={`tile tile-${def.role} ${important ? 'tile-interactive' : ''} ${tile.type === 'gems' ? 'gem-spawn' : ''} ${tile.isPlayerBase ? 'player-base' : ''} ${selectedId === tile.id ? 'selected' : ''}`}
-                  onClick={() => selectTile(tile)}
-                  aria-haspopup={important ? 'dialog' : undefined}
-                  aria-label={`${def.name}, coordenadas ${tile.worldX}, ${tile.worldY}${important ? ', abrir información' : ''}`}
-                >
-                  <TileImage def={def} />
-                  <span className="axis-coordinate">{tile.worldX},{tile.worldY}</span>
-                  {tile.isPlayerBase && <img className="base-layer" src={BASE_ASSET} alt="" draggable="false" aria-hidden="true" />}
-                </button>
-              )
-            })}
-          </div>
-
-          <div className="zoom-controls">
-            <button type="button" onPointerDown={(e) => e.stopPropagation()} onClick={() => zoom(0.1)} aria-label="Acercar"><ZoomIn /></button>
-            <button type="button" onPointerDown={(e) => e.stopPropagation()} onClick={() => zoom(-0.1)} aria-label="Alejar"><ZoomOut /></button>
-            <button type="button" onPointerDown={(e) => e.stopPropagation()} onClick={centerOrigin} aria-label="Centrar en cero cero"><Crosshair /></button>
-          </div>
-
-          <div className="gem-status"><span className="gem-dot">◆</span><div><strong>{activeGemCount}/{MAX_ACTIVE_GEMS} gemas</strong><small>Nueva en {Math.ceil(nextGemIn / 1000)}s</small></div></div>
-
-          {popupOpen && selected && detail && (
-            <section className="tile-popup" role="dialog" aria-modal="false" aria-label="Información de la casilla">
-              <button className="popup-close" type="button" onClick={() => setPopupOpen(false)} aria-label="Cerrar"><X size={20} /></button>
-              <div className="popup-art"><img src={detail.image} alt="" /></div>
-              <div className="popup-copy">
-                <small>COORD. ({selected.worldX}, {selected.worldY}) · TILE {TILE_TYPES[selected.type].tileNumber}</small>
-                <h2>{detail.title}</h2>
-                <strong>{detail.subtitle}</strong>
-                {detail.lines.map((line) => <p key={line}>{line}</p>)}
+        {/* Modal de Desglose Económico Rápido */}
+        {showResourceDetails && (
+          <div className="modal-overlay" onClick={() => setShowResourceDetails(false)}>
+            <div className="march-modal-content" onClick={(e) => e.stopPropagation()}>
+              <div className="march-modal-header">
+                <h3>Economía del Reino</h3>
+                <button type="button" className="close-btn" onClick={() => setShowResourceDetails(false)}><X size={18} /></button>
               </div>
-              <button type="button" className="popup-action" onClick={() => setNotice(`${detail.action}: (${selected.worldX}, ${selected.worldY}) · ${detail.title}`)}>{detail.action}</button>
-            </section>
+              <div className="tax-info-box">
+                <div>
+                  <strong>Producción Pasiva del Castillo:</strong>
+                  <p>🌲 +{gameState.passiveProductionPerHour.wood}W/h · 🪨 +{gameState.passiveProductionPerHour.stone}S/h · 🌾 +{gameState.passiveProductionPerHour.food}F/h</p>
+                  <strong>Mantenimiento de Ejército:</strong>
+                  <p>🌾 -{gameState.totalFoodUpkeepPerHour} Comida/h (Penalización logística: ×{gameState.logisticsMultiplier.toFixed(2)})</p>
+                  <strong>Estados de KING:</strong>
+                  <p>
+                    Pendiente: {gameState.king.pending.toFixed(2)} KING<br />
+                    Protegido: {gameState.kingProtected.toFixed(2)} KING<br />
+                    Expuesto: {gameState.kingExposed.toFixed(2)} KING<br />
+                    Vault / Wallet: {gameState.king.vault.toFixed(2)} KING
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* CONTENIDO PRINCIPAL SEGÚN PESTAÑA */}
+        {activeMenu === 'home' && (
+          <div
+            ref={viewportRef}
+            className="map-viewport"
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerCancel={onPointerUp}
+            onWheel={onWheel}
+            onScroll={(e) => {
+              e.currentTarget.scrollLeft = 0
+              e.currentTarget.scrollTop = 0
+            }}
+          >
+            {/* Buscador de Coordenadas */}
+            <form className="map-search" onSubmit={searchCoordinates}>
+              <MapPin size={16} />
+              <input value={coordQuery} onChange={(e) => setCoordQuery(e.target.value)} placeholder="X,Y ej. 4,-3" aria-label="Buscar coordenadas" />
+              <button type="submit" aria-label="Buscar"><Search size={17} /></button>
+            </form>
+
+            {/* Banner Flotante de Marchas Activas */}
+            {gameState.marches.length > 0 && (
+              <div className="floating-marches-bar">
+                {gameState.marches.map((m) => {
+                  const now = Date.now()
+                  let targetTime = m.arriveTime
+                  let phaseLabel = 'Viajando'
+                  if (m.status === 'gathering') { targetTime = m.gatherUntil; phaseLabel = 'Recolectando' }
+                  if (m.status === 'returning') { targetTime = m.returnTime; phaseLabel = 'Regresando' }
+                  const remSec = Math.max(1, Math.ceil((targetTime - now) / 1000))
+                  const speedCost = gameState.calculateKingCostForSec(remSec)
+
+                  return (
+                    <div key={m.id} className="march-pill">
+                      <div className="march-pill-left">
+                        <span>🐎</span>
+                        <div>
+                          <strong>{m.targetName}</strong> ({phaseLabel}: {remSec}s)
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="march-pill-speedup"
+                        onClick={() => gameState.speedupMarch(m.id)}
+                      >
+                        ⚡ {speedCost} KING
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
+            {/* Cuadrícula del Mapa */}
+            <MapGrid
+              tiles={tiles}
+              selectedId={selectedId}
+              onSelectTile={selectTile}
+              gridRef={mapGridRef}
+              marches={gameState.marches}
+              baseCoord={DEMO_BASE}
+              onSpeedupMarch={gameState.speedupMarch}
+              calculateKingCostForSec={gameState.calculateKingCostForSec}
+              initialStyle={{
+                gridTemplateColumns: `repeat(${MAP_SIZE}, ${TILE_SIZE}px)`,
+                gridAutoRows: `${TILE_SIZE}px`,
+                transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
+              }}
+            />
+
+            {/* Controles de Zoom y Centrado */}
+            <div className="zoom-controls">
+              <button
+                type="button"
+                className="zoom-base-btn"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={() => {
+                  focusTile(DEMO_BASE.worldX, DEMO_BASE.worldY, INITIAL_SCALE)
+                  const baseTile = tiles.find((t) => t.worldX === DEMO_BASE.worldX && t.worldY === DEMO_BASE.worldY)
+                  if (baseTile) {
+                    setSelectedId(baseTile.id)
+                    setPopupOpen(true)
+                  }
+                }}
+                title="Centrar en Mi Base (4, -3)"
+                aria-label="Centrar en Mi Base"
+              >
+                🏰
+              </button>
+              <button type="button" onPointerDown={(e) => e.stopPropagation()} onClick={() => zoom(0.1)} aria-label="Acercar"><ZoomIn /></button>
+              <button type="button" onPointerDown={(e) => e.stopPropagation()} onClick={() => zoom(-0.1)} aria-label="Alejar"><ZoomOut /></button>
+              <button type="button" onPointerDown={(e) => e.stopPropagation()} onClick={centerOrigin} aria-label="Centrar en cero cero"><Crosshair /></button>
+            </div>
+
+            {/* Barra de Acceso Rápido a Mi Base */}
+            <div className="map-quick-bar">
+              <button
+                type="button"
+                className="btn-quick-base"
+                onClick={() => setActiveMenu('build')}
+              >
+                🏛️ Mi Base (Edificios)
+              </button>
+              <button
+                type="button"
+                className="btn-quick-center"
+                onClick={() => {
+                  focusTile(DEMO_BASE.worldX, DEMO_BASE.worldY, INITIAL_SCALE)
+                  const baseTile = tiles.find((t) => t.worldX === DEMO_BASE.worldX && t.worldY === DEMO_BASE.worldY)
+                  if (baseTile) {
+                    setSelectedId(baseTile.id)
+                    setPopupOpen(true)
+                  }
+                }}
+              >
+                📍 Centrar (4, -3)
+              </button>
+            </div>
+
+            {/* Estado de Gemas Temporales */}
+            <div className="gem-status">
+              <span className="gem-dot">◆</span>
+              <div>
+                <strong>{activeGemCount}/{MAX_ACTIVE_GEMS} gemas</strong>
+                <small>Nueva en {Math.ceil(nextGemIn / 1000)}s</small>
+              </div>
+            </div>
+
+            {/* Popup Informativo de Casilla */}
+            {popupOpen && selected && detail && (
+              <section className="tile-popup" role="dialog" aria-modal="false" aria-label="Información de la casilla">
+                <button className="popup-close" type="button" onClick={() => setPopupOpen(false)} aria-label="Cerrar"><X size={20} /></button>
+                <div className="popup-art"><img src={detail.image} alt="" /></div>
+                <div className="popup-copy">
+                  <small>COORD. ({selected.worldX}, {selected.worldY}) · TILE {TILE_TYPES[selected.type].tileNumber}</small>
+                  <h2>{detail.title}</h2>
+                  <strong>{detail.subtitle}</strong>
+                  {detail.lines.map((line) => <p key={line}>{line}</p>)}
+                </div>
+                <button
+                  type="button"
+                  className="popup-action"
+                  onClick={() => {
+                    detail.onClick ? detail.onClick() : setPopupOpen(false)
+                  }}
+                >
+                  {detail.action}
+                </button>
+              </section>
+            )}
+          </div>
+        )}
+
+        {activeMenu === 'build' && <BuildView gameState={gameState} onClose={() => setActiveMenu('home')} />}
+        {activeMenu === 'battle' && <BattleView gameState={gameState} onClose={() => setActiveMenu('home')} onOpenReport={(rep) => setSelectedReport(rep)} />}
+        {activeMenu === 'clan' && <ClanView gameState={gameState} onClose={() => setActiveMenu('home')} />}
+        {activeMenu === 'market' && <MarketView gameState={gameState} onClose={() => setActiveMenu('home')} />}
+
+        {/* Barra de Notificaciones y Spawn de Jugadores */}
+        <div className="notice-bar">
+          <span>{notice}</span>
+          {activeMenu === 'home' && (
+            <button type="button" className="spawn-player-button" onClick={simulatePlayerJoin}>+ Jugador</button>
           )}
         </div>
 
-        <div className="notice-bar"><span>{notice}</span><button type="button" className="spawn-player-button" onClick={simulatePlayerJoin}>+ Jugador</button></div>
-
+        {/* Barra de Navegación Inferior */}
         <nav className="bottom-nav" aria-label="Navegación principal">
           {MENU_ITEMS.map((item) => (
-            <button key={item.id} type="button" className={activeMenu === item.id ? 'active' : ''} onClick={() => setActiveMenu(item.id)}>
+            <button
+              key={item.id}
+              type="button"
+              className={activeMenu === item.id ? 'active' : ''}
+              onClick={() => {
+                setActiveMenu(item.id)
+                setPopupOpen(false)
+              }}
+            >
               <img className="nav-art" src={item.src} alt="" draggable="false" />
               <span>{item.label}</span>
             </button>
           ))}
         </nav>
+
+        {/* Modal de Despacho de Marcha */}
+        {marchModalTarget && (
+          <MarchModal
+            tile={marchModalTarget}
+            tileDef={TILE_TYPES[marchModalTarget.type]}
+            baseCoord={DEMO_BASE}
+            gameState={gameState}
+            onClose={() => setMarchModalTarget(null)}
+          />
+        )}
+
+        {/* Modal de Reporte de Batalla */}
+        {selectedReport && (
+          <BattleReportModal
+            report={selectedReport}
+            onClose={() => setSelectedReport(null)}
+          />
+        )}
       </section>
     </main>
   )
